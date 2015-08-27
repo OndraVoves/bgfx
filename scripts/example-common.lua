@@ -8,17 +8,43 @@ project ("example-common")
 	kind "StaticLib"
 
 	includedirs {
-		BX_DIR .. "include",
-		BGFX_DIR .. "include",
-		BGFX_DIR .. "3rdparty",
+		path.join(BX_DIR, "include"),
+		path.join(BGFX_DIR, "include"),
+		path.join(BGFX_DIR, "3rdparty"),
 	}
 
 	files {
-		BGFX_DIR .. "3rdparty/ib-compress/**.cpp",
-		BGFX_DIR .. "3rdparty/ib-compress/**.h",
-		BGFX_DIR .. "examples/common/**.cpp",
-		BGFX_DIR .. "examples/common/**.h",
+		path.join(BGFX_DIR, "3rdparty/ib-compress/**.cpp"),
+		path.join(BGFX_DIR, "3rdparty/ib-compress/**.h"),
+		path.join(BGFX_DIR, "3rdparty/ocornut-imgui/**.cpp"),
+		path.join(BGFX_DIR, "3rdparty/ocornut-imgui/**.h"),
+		path.join(BGFX_DIR, "examples/common/**.cpp"),
+		path.join(BGFX_DIR, "examples/common/**.h"),
 	}
+
+	if _OPTIONS["with-scintilla"] then
+		defines {
+			"SCI_NAMESPACE",
+			"SCI_LEXER",
+		}
+
+		buildoptions {
+--			"-Wno-missing-field-initializers",
+		}
+
+		includedirs {
+			path.join(BGFX_DIR, "3rdparty/scintilla/include"),
+			path.join(BGFX_DIR, "3rdparty/scintilla/lexlib"),
+		}
+
+		files {
+			path.join(BGFX_DIR, "3rdparty/scintilla/src/**.cxx"),
+			path.join(BGFX_DIR, "3rdparty/scintilla/src/**.h"),
+			path.join(BGFX_DIR, "3rdparty/scintilla/lexlib/**.cxx"),
+			path.join(BGFX_DIR, "3rdparty/scintilla/lexlib/**.h"),
+			path.join(BGFX_DIR, "3rdparty/scintilla/lexers/**.cxx"),
+		}
+	end
 
 	if _OPTIONS["with-sdl"] then
 		defines {
@@ -29,17 +55,25 @@ project ("example-common")
 		}
 	end
 
-	configuration { "mingw* or vs2008" }
+	if _OPTIONS["with-glfw"] then
+		defines {
+			"ENTRY_CONFIG_USE_GLFW=1",
+		}
+	end
+
+	configuration { "vs2008" }
 		includedirs {
 			"$(DXSDK_DIR)/include",
 		}
-
-	configuration { "xcode4" }
+	if (_OPTIONS["vs"] == "vs2012-xp") or (_OPTIONS["vs"] == "vs2013-xp") then
+	configuration { "vs201*" }
 		includedirs {
-			BX_DIR .. "include/compat/osx",
+			"$(DXSDK_DIR)/include",
 		}
+	end
 
-	configuration { "winphone8*"}
+	configuration { "winphone8* or winstore8*"}
 		linkoptions {
 			"/ignore:4264" -- LNK4264: archiving object file compiled with /ZW into a static library; note that when authoring Windows Runtime types it is not recommended to link with a static library that contains Windows Runtime metadata
 		}
+		premake.vstudio.splashpath = "../../../examples/runtime/images/SplashScreen.png"

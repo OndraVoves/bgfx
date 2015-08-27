@@ -84,7 +84,7 @@ static const uint16_t s_cubeIndices[36] =
 	 9, 10, 11,
 
 	12, 14, 13, // 6
-	14, 15, 13, 
+	14, 15, 13,
 
 	16, 18, 17, // 8
 	18, 19, 17,
@@ -96,7 +96,7 @@ static const uint16_t s_cubeIndices[36] =
 static void updateTextureCubeRectBgra8(bgfx::TextureHandle _handle, uint8_t _side, uint32_t _x, uint32_t _y, uint32_t _width, uint32_t _height, uint8_t _r, uint8_t _g, uint8_t _b, uint8_t _a = 0xff)
 {
 	bgfx::TextureInfo ti;
-	bgfx::calcTextureSize(ti, _width, _height, 1, 1, bgfx::TextureFormat::BGRA8);
+	bgfx::calcTextureSize(ti, _width, _height, 1, 1, false, bgfx::TextureFormat::BGRA8);
 
 	const bgfx::Memory* mem = bgfx::alloc(ti.storageSize);
 	uint8_t* data = (uint8_t*)mem->data;
@@ -127,7 +127,7 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 
 	// Set view 0 clear state.
 	bgfx::setViewClear(0
-		, BGFX_CLEAR_COLOR_BIT|BGFX_CLEAR_DEPTH_BIT
+		, BGFX_CLEAR_COLOR|BGFX_CLEAR_DEPTH
 		, 0x303030ff
 		, 1.0f
 		, 0
@@ -149,6 +149,48 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 		loadTexture("texture_compression_ptc24.pvr"),
 	};
 
+	const bgfx::Memory* mem8   = bgfx::alloc(32*32*32);
+	const bgfx::Memory* mem16f = bgfx::alloc(32*32*32*2);
+	const bgfx::Memory* mem32f = bgfx::alloc(32*32*32*4);
+	for (uint8_t zz = 0; zz < 32; ++zz)
+	{
+		for (uint8_t yy = 0; yy < 32; ++yy)
+		{
+			for (uint8_t xx = 0; xx < 32; ++xx)
+			{
+				const uint32_t offset = ( (zz*32+yy)*32+xx);
+				const uint32_t val = xx ^ yy ^ zz;
+				mem8->data[offset] = val<<3;
+				*(uint16_t*)&mem16f->data[offset*2] = bx::halfFromFloat( (float)val/32.0f);
+				*(float*)&mem32f->data[offset*4] = (float)val/32.0f;
+			}
+		}
+	}
+
+	const bgfx::Caps* caps = bgfx::getCaps();
+	const bool texture3DSupported = !!(caps->supported & BGFX_CAPS_TEXTURE_3D);
+
+	uint32_t numTextures3d = 0;
+	bgfx::TextureHandle textures3d[3] = {};
+
+	if (texture3DSupported)
+	{
+		if (0 != (BGFX_CAPS_FORMAT_TEXTURE_COLOR & caps->formats[bgfx::TextureFormat::R8]) )
+		{
+			textures3d[numTextures3d++] = bgfx::createTexture3D(32, 32, 32, 0, bgfx::TextureFormat::R8,   BGFX_TEXTURE_U_CLAMP|BGFX_TEXTURE_V_CLAMP|BGFX_TEXTURE_W_CLAMP, mem8);
+		}
+
+		if (0 != (BGFX_CAPS_FORMAT_TEXTURE_COLOR & caps->formats[bgfx::TextureFormat::R16F]) )
+		{
+			textures3d[numTextures3d++] = bgfx::createTexture3D(32, 32, 32, 0, bgfx::TextureFormat::R16F, BGFX_TEXTURE_U_CLAMP|BGFX_TEXTURE_V_CLAMP|BGFX_TEXTURE_W_CLAMP, mem16f);
+		}
+
+		if (0 != (BGFX_CAPS_FORMAT_TEXTURE_COLOR & caps->formats[bgfx::TextureFormat::R32F]) )
+		{
+			textures3d[numTextures3d++] = bgfx::createTexture3D(32, 32, 32, 0, bgfx::TextureFormat::R32F, BGFX_TEXTURE_U_CLAMP|BGFX_TEXTURE_V_CLAMP|BGFX_TEXTURE_W_CLAMP, mem32f);
+		}
+	}
+
 	// Create static vertex buffer.
 	bgfx::VertexBufferHandle vbh = bgfx::createVertexBuffer(bgfx::makeRef(s_cubeVertices, sizeof(s_cubeVertices) ), PosTexcoordVertex::ms_decl);
 
@@ -156,12 +198,18 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 	bgfx::IndexBufferHandle ibh = bgfx::createIndexBuffer(bgfx::makeRef(s_cubeIndices, sizeof(s_cubeIndices) ) );
 
 	// Create texture sampler uniforms.
-	bgfx::UniformHandle u_texCube = bgfx::createUniform("u_texCube", bgfx::UniformType::Uniform1iv);
+	bgfx::UniformHandle s_texCube  = bgfx::createUniform("s_texCube",  bgfx::UniformType::Int1);
+	bgfx::UniformHandle s_texColor = bgfx::createUniform("s_texColor", bgfx::UniformType::Int1);
 
-	bgfx::UniformHandle u_texColor = bgfx::createUniform("u_texColor", bgfx::UniformType::Uniform1iv);
+	bgfx::UniformHandle u_time = bgfx::createUniform("u_time", bgfx::UniformType::Vec4);
 
-	bgfx::ProgramHandle program    = loadProgram("vs_update", "fs_update");
-	bgfx::ProgramHandle programCmp = loadProgram("vs_update", "fs_update_cmp");
+	bgfx::ProgramHandle program     = loadProgram("vs_update", "fs_update");
+	bgfx::ProgramHandle programCmp  = loadProgram("vs_update", "fs_update_cmp");
+	bgfx::ProgramHandle program3d   = BGFX_INVALID_HANDLE;
+	if (texture3DSupported)
+	{
+		program3d = loadProgram("vs_update", "fs_update_3d");
+	}
 
 	const uint32_t textureSide = 2048;
 
@@ -201,7 +249,7 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 
 		// This dummy draw call is here to make sure that view 0 is cleared
 		// if no other draw calls are submitted to view 0.
-		bgfx::submit(0);
+		bgfx::touch(0);
 
 		int64_t now = bx::getHPCounter();
 		static int64_t last = now;
@@ -210,6 +258,7 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 		const int64_t freq = bx::getHPFrequency();
 		const double toMs = 1000.0/double(freq);
 		float time = (float)( (now - timeOffset)/double(bx::getHPFrequency() ) );
+		bgfx::setUniform(u_time, &time);
 
 		// Use debug font to print information about this example.
 		bgfx::dbgTextClear();
@@ -243,8 +292,7 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 
 				for (uint32_t ii = 0, num = bx::uint32_min(10, (uint32_t)quads.size() ); ii < num; ++ii)
 				{
-					const PackCube& face = quads.front();
-					cube.clear(face);
+					cube.clear(quads.front() );
 					quads.pop_front();
 				}
 			}
@@ -285,7 +333,7 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 
 		float at[3] = { 0.0f, 0.0f, 0.0f };
 		float eye[3] = { 0.0f, 0.0f, -5.0f };
-		
+
 		float view[16];
 		float proj[16];
 		bx::mtxLookAt(view, eye, at);
@@ -300,21 +348,18 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 		// Set model matrix for rendering.
 		bgfx::setTransform(mtx);
 
-		// Set vertex and fragment shaders.
-		bgfx::setProgram(program);
-
 		// Set vertex and index buffer.
 		bgfx::setVertexBuffer(vbh);
 		bgfx::setIndexBuffer(ibh);
 
 		// Bind texture.
-		bgfx::setTexture(0, u_texCube, textureCube);
+		bgfx::setTexture(0, s_texCube, textureCube);
 
 		// Set render states.
 		bgfx::setState(BGFX_STATE_DEFAULT);
 
 		// Submit primitive for rendering to view 0.
-		bgfx::submit(0);
+		bgfx::submit(0, program);
 
 
 		// Set view and projection matrix for view 1.
@@ -329,72 +374,85 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 		// Set model matrix for rendering.
 		bgfx::setTransform(mtx);
 
-		// Set vertex and fragment shaders.
-		bgfx::setProgram(programCmp);
-
 		// Set vertex and index buffer.
 		bgfx::setVertexBuffer(vbh);
 		bgfx::setIndexBuffer(ibh);
 
 		// Bind texture.
-		bgfx::setTexture(0, u_texColor, texture2d);
+		bgfx::setTexture(0, s_texColor, texture2d);
 
 		// Set render states.
 		bgfx::setState(BGFX_STATE_DEFAULT);
 
 		// Submit primitive for rendering to view 1.
-		bgfx::submit(1);
+		bgfx::submit(1, programCmp);
 
+		const float xpos = -8.0f - BX_COUNTOF(textures)*0.1f*0.5f;
 
 		for (uint32_t ii = 0; ii < BX_COUNTOF(textures); ++ii)
 		{
-			bx::mtxTranslate(mtx, -8.0f - BX_COUNTOF(textures)*0.1f*0.5f + ii*2.1f, 4.0f, 0.0f);
+			bx::mtxTranslate(mtx, xpos + ii*2.1f, 4.0f, 0.0f);
 
 			// Set model matrix for rendering.
 			bgfx::setTransform(mtx);
-
-			// Set vertex and fragment shaders.
-			bgfx::setProgram(programCmp);
 
 			// Set vertex and index buffer.
 			bgfx::setVertexBuffer(vbh);
 			bgfx::setIndexBuffer(ibh, 0, 6);
 
 			// Bind texture.
-			bgfx::setTexture(0, u_texColor, textures[ii]);
+			bgfx::setTexture(0, s_texColor, textures[ii]);
 
 			// Set render states.
 			bgfx::setState(BGFX_STATE_DEFAULT);
 
 			// Submit primitive for rendering to view 1.
-			bgfx::submit(1);
+			bgfx::submit(1, programCmp);
 		}
 
-		for (uint32_t ii = 0; ii < 3; ++ii)
+		for (uint32_t ii = 0; ii < numTextures3d; ++ii)
 		{
-			bx::mtxTranslate(mtx, -8.0f - BX_COUNTOF(textures)*0.1f*0.5f + 8*2.1f, -4.0f + ii*2.1f, 0.0f);
+			bx::mtxTranslate(mtx, xpos + ii*2.1f, -4.0f, 0.0f);
 
 			// Set model matrix for rendering.
 			bgfx::setTransform(mtx);
 
-			// Set vertex and fragment shaders.
-			bgfx::setProgram(programCmp);
+			// Set vertex and index buffer.
+			bgfx::setVertexBuffer(vbh);
+			bgfx::setIndexBuffer(ibh, 0, 6);
+
+			// Bind texture.
+			bgfx::setTexture(0, s_texColor, textures3d[ii]);
+
+			// Set render states.
+			bgfx::setState(BGFX_STATE_DEFAULT);
+
+			// Submit primitive for rendering to view 1.
+			bgfx::submit(1, program3d);
+		}
+
+		for (uint32_t ii = 0; ii < 3; ++ii)
+		{
+			bx::mtxTranslate(mtx, xpos + 8*2.1f, -4.0f + ii*2.1f, 0.0f);
+
+			// Set model matrix for rendering.
+			bgfx::setTransform(mtx);
 
 			// Set vertex and index buffer.
 			bgfx::setVertexBuffer(vbh, 24, 4);
 			bgfx::setIndexBuffer(ibh, 0, 6);
 
 			// Bind texture.
-			bgfx::setTexture(0, u_texColor, textures[ii]);
+			bgfx::setTexture(0, s_texColor, textures[ii]);
 
 			// Set render states.
 			bgfx::setState(BGFX_STATE_DEFAULT);
 
 			// Submit primitive for rendering to view 1.
-			bgfx::submit(1);
+			bgfx::submit(1, programCmp);
 		}
 
-		// Advance to next frame. Rendering thread will be kicked to 
+		// Advance to next frame. Rendering thread will be kicked to
 		// process submitted rendering primitives.
 		bgfx::frame();
 	}
@@ -412,14 +470,24 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 		bgfx::destroyTexture(textures[ii]);
 	}
 
+	for (uint32_t ii = 0; ii < numTextures3d; ++ii)
+	{
+		bgfx::destroyTexture(textures3d[ii]);
+	}
+
 	bgfx::destroyTexture(texture2d);
 	bgfx::destroyTexture(textureCube);
 	bgfx::destroyIndexBuffer(ibh);
 	bgfx::destroyVertexBuffer(vbh);
+	if (bgfx::isValid(program3d) )
+	{
+		bgfx::destroyProgram(program3d);
+	}
 	bgfx::destroyProgram(programCmp);
 	bgfx::destroyProgram(program);
-	bgfx::destroyUniform(u_texColor);
-	bgfx::destroyUniform(u_texCube);
+	bgfx::destroyUniform(u_time);
+	bgfx::destroyUniform(s_texColor);
+	bgfx::destroyUniform(s_texCube);
 
 	// Shutdown bgfx.
 	bgfx::shutdown();

@@ -19,23 +19,23 @@
 #include <windows.h>
 #include <gl/GL.h>
 extern "C" {
-typedef char GLcharARB;		/* native character */
-typedef unsigned int GLhandleARB;	/* shader object handle */
-#define GL_VERTEX_SHADER_ARB              0x8B31
-#define GL_FRAGMENT_SHADER_ARB            0x8B30
-#define GL_OBJECT_COMPILE_STATUS_ARB      0x8B81
-typedef void (WINAPI * PFNGLDELETEOBJECTARBPROC) (GLhandleARB obj);
-typedef GLhandleARB (WINAPI * PFNGLCREATESHADEROBJECTARBPROC) (GLenum shaderType);
-typedef void (WINAPI * PFNGLSHADERSOURCEARBPROC) (GLhandleARB shaderObj, GLsizei count, const GLcharARB* *string, const GLint *length);
-typedef void (WINAPI * PFNGLCOMPILESHADERARBPROC) (GLhandleARB shaderObj);
-typedef void (WINAPI * PFNGLGETINFOLOGARBPROC) (GLhandleARB obj, GLsizei maxLength, GLsizei *length, GLcharARB *infoLog);
-typedef void (WINAPI * PFNGLGETOBJECTPARAMETERIVARBPROC) (GLhandleARB obj, GLenum pname, GLint *params);
-static PFNGLDELETEOBJECTARBPROC glDeleteObjectARB;
-static PFNGLCREATESHADEROBJECTARBPROC glCreateShaderObjectARB;
-static PFNGLSHADERSOURCEARBPROC glShaderSourceARB;
-static PFNGLCOMPILESHADERARBPROC glCompileShaderARB;
-static PFNGLGETINFOLOGARBPROC glGetInfoLogARB;
-static PFNGLGETOBJECTPARAMETERIVARBPROC glGetObjectParameterivARB;
+typedef char GLchar;		/* native character */
+typedef unsigned int GLuint;	/* shader object handle */
+#define GL_VERTEX_SHADER              0x8B31
+#define GL_FRAGMENT_SHADER            0x8B30
+#define GL_COMPILE_STATUS             0x8B81
+typedef void (WINAPI * PFNGLDELETESHADERPROC) (GLuint shader);
+typedef GLuint (WINAPI * PFNGLCREATESHADERPROC) (GLenum type);
+typedef void (WINAPI * PFNGLSHADERSOURCEPROC) (GLuint shader, GLsizei count, const GLchar *const*string, const GLint *length);
+typedef void (WINAPI * PFNGLCOMPILESHADERPROC) (GLuint shader);
+typedef void (WINAPI * PFNGLGETSHADERINFOLOGPROC) (GLuint shader, GLsizei bufSize, GLsizei *length, GLchar *infoLog);
+typedef void (WINAPI * PFNGLGETSHADERIVPROC) (GLuint shader, GLenum pname, GLint *params);
+static PFNGLDELETESHADERPROC glDeleteShader;
+static PFNGLCREATESHADERPROC glCreateShader;
+static PFNGLSHADERSOURCEPROC glShaderSource;
+static PFNGLCOMPILESHADERPROC glCompileShader;
+static PFNGLGETSHADERINFOLOGPROC glGetShaderInfoLog;
+static PFNGLGETSHADERIVPROC glGetShaderiv;
 }
 #endif // #ifdef _MSC_VER
 
@@ -154,12 +154,12 @@ static bool InitializeOpenGL ()
 #ifdef _MSC_VER
 	if (hasGLSL)
 	{
-		glDeleteObjectARB = (PFNGLDELETEOBJECTARBPROC)wglGetProcAddress("glDeleteObjectARB");
-		glCreateShaderObjectARB = (PFNGLCREATESHADEROBJECTARBPROC)wglGetProcAddress("glCreateShaderObjectARB");
-		glShaderSourceARB = (PFNGLSHADERSOURCEARBPROC)wglGetProcAddress("glShaderSourceARB");
-		glCompileShaderARB = (PFNGLCOMPILESHADERARBPROC)wglGetProcAddress("glCompileShaderARB");
-		glGetInfoLogARB = (PFNGLGETINFOLOGARBPROC)wglGetProcAddress("glGetInfoLogARB");
-		glGetObjectParameterivARB = (PFNGLGETOBJECTPARAMETERIVARBPROC)wglGetProcAddress("glGetObjectParameterivARB");
+		glDeleteShader = (PFNGLDELETESHADERPROC)wglGetProcAddress("glDeleteShader");
+		glCreateShader = (PFNGLCREATESHADERPROC)wglGetProcAddress("glCreateShader");
+		glShaderSource = (PFNGLSHADERSOURCEPROC)wglGetProcAddress("glShaderSource");
+		glCompileShader = (PFNGLCOMPILESHADERPROC)wglGetProcAddress("glCompileShader");
+		glGetShaderInfoLog = (PFNGLGETSHADERINFOLOGPROC)wglGetProcAddress("glGetShaderInfoLog");
+		glGetShaderiv = (PFNGLGETSHADERIVPROC)wglGetProcAddress("glGetShaderiv");
 	}
 #endif
 
@@ -256,13 +256,18 @@ static bool CheckGLSL (bool vertex, bool gles, const std::string& testName, cons
 			src += "#define gl_LastFragData _glesLastFragData\n";
 			src += "varying lowp vec4 _glesLastFragData[4];\n";
 		}
-		src += "float shadow2DEXT (sampler2DShadow s, vec3 p) { return shadow2D(s,p).r; }\n";
-		src += "float shadow2DProjEXT (sampler2DShadow s, vec4 p) { return shadow2DProj(s,p).r; }\n";
+		if (!need3)
+		{
+			src += "float shadow2DEXT (sampler2DShadow s, vec3 p) { return shadow2D(s,p).r; }\n";
+			src += "float shadow2DProjEXT (sampler2DShadow s, vec4 p) { return shadow2DProj(s,p).r; }\n";
+		}
 	}
 	src += source;
 	if (gles)
 	{
 		replace_string (src, "GL_EXT_shader_texture_lod", "GL_ARB_shader_texture_lod", 0);
+		replace_string (src, "GL_EXT_draw_instanced", "GL_ARB_draw_instanced", 0);
+		replace_string (src, "gl_InstanceIDEXT", "gl_InstanceIDARB	", 0);
 		replace_string (src, "#extension GL_OES_standard_derivatives : require", "", 0);
 		replace_string (src, "#extension GL_EXT_shadow_samplers : require", "", 0);
 		replace_string (src, "#extension GL_EXT_frag_depth : require", "", 0);
@@ -274,8 +279,11 @@ static bool CheckGLSL (bool vertex, bool gles, const std::string& testName, cons
 		replace_string (src, "precision ", "// precision ", 0);
 		replace_string (src, "#version 300 es", "", 0);
 	}
-	replace_string (src, "#extension GL_EXT_shader_framebuffer_fetch : require", "", 0);
-	replace_string (src, "#extension GL_EXT_shader_framebuffer_fetch : enable", "", 0);
+	
+	// can't check FB fetch on PC
+	if (src.find("#extension GL_EXT_shader_framebuffer_fetch") != std::string::npos)
+		return true;
+
 	if (gles && need3)
 	{
 		src = "#version 330\n" + src;
@@ -283,22 +291,24 @@ static bool CheckGLSL (bool vertex, bool gles, const std::string& testName, cons
 	const char* sourcePtr = src.c_str();
 
 	
-	GLhandleARB shader = glCreateShaderObjectARB (vertex ? GL_VERTEX_SHADER_ARB : GL_FRAGMENT_SHADER_ARB);
-	glShaderSourceARB (shader, 1, &sourcePtr, NULL);
-	glCompileShaderARB (shader);
+	GLuint shader = glCreateShader (vertex ? GL_VERTEX_SHADER : GL_FRAGMENT_SHADER);
+	glShaderSource (shader, 1, &sourcePtr, NULL);
+	glCompileShader (shader);
 	GLint status;
-	glGetObjectParameterivARB (shader, GL_OBJECT_COMPILE_STATUS_ARB, &status);
+	
+	glGetShaderiv (shader, GL_COMPILE_STATUS, &status);
+	
 	bool res = true;
-	if (status == 0)
+	if (status != GL_TRUE)
 	{
 		char log[20000];
 		log[0] = 0;
 		GLsizei logLength;
-		glGetInfoLogARB (shader, sizeof(log), &logLength, log);
+		glGetShaderInfoLog (shader, sizeof(log), &logLength, log);
 		printf ("\n  %s: real glsl compiler error on %s:\n%s\n", testName.c_str(), prefix, log);
 		res = false;
 	}
-	glDeleteObjectARB (shader);
+	glDeleteShader (shader);
 	return res;
 }
 
@@ -312,13 +322,16 @@ static bool CheckMetal (bool vertex, bool gles, const std::string& testName, con
 	FILE* f = fopen ("metalTemp.metal", "wb");
 	fwrite (source.c_str(), source.size(), 1, f);
 	fclose (f);
-	
+
+#if defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__)
 	int res = system("/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/usr/bin/metal metalTemp.metal -o metalTemp.o -std=ios-metal1.0 -Wno-parentheses-equality");
 	if (res != 0)
 	{
 		printf ("\n  %s: Metal compiler failed\n", testName.c_str());
 		return false;
 	}
+#endif //
+
 	return true;
 }
 

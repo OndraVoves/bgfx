@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "common.h"
+#include "bgfx_utils.h"
 
 #include <bgfx.h>
 #include <bx/timer.h>
@@ -16,14 +17,14 @@
 #include "camera.h"
 #include "imgui/imgui.h"
 
-#define RENDER_VIEWID_RANGE1_PASS_0   1 
-#define RENDER_VIEWID_RANGE1_PASS_1   2 
-#define RENDER_VIEWID_RANGE1_PASS_2   3 
-#define RENDER_VIEWID_RANGE1_PASS_3   4 
-#define RENDER_VIEWID_RANGE1_PASS_4   5 
-#define RENDER_VIEWID_RANGE1_PASS_5   6 
+#define RENDER_VIEWID_RANGE1_PASS_0   1
+#define RENDER_VIEWID_RANGE1_PASS_1   2
+#define RENDER_VIEWID_RANGE1_PASS_2   3
+#define RENDER_VIEWID_RANGE1_PASS_3   4
+#define RENDER_VIEWID_RANGE1_PASS_4   5
+#define RENDER_VIEWID_RANGE1_PASS_5   6
 #define RENDER_VIEWID_RANGE5_PASS_6   7
-#define RENDER_VIEWID_RANGE1_PASS_7  13 
+#define RENDER_VIEWID_RANGE1_PASS_7  13
 
 #define MAX_NUM_LIGHTS 5
 
@@ -145,79 +146,14 @@ static const uint16_t s_planeIndices[] =
 	1, 3, 2,
 };
 
-static const char* s_shaderPath = NULL;
 static bool s_flipV = false;
 static uint32_t s_viewMask = 0;
 static uint32_t s_clearMask = 0;
-static bgfx::UniformHandle u_texColor;
+static bgfx::UniformHandle s_texColor;
 
 inline void mtxProj(float* _result, float _fovy, float _aspect, float _near, float _far)
 {
 	bx::mtxProj(_result, _fovy, _aspect, _near, _far, s_flipV);
-}
-
-static void shaderFilePath(char* _out, const char* _name)
-{
-	strcpy(_out, s_shaderPath);
-	strcat(_out, _name);
-	strcat(_out, ".bin");
-}
-
-long int fsize(FILE* _file)
-{
-	long int pos = ftell(_file);
-	fseek(_file, 0L, SEEK_END);
-	long int size = ftell(_file);
-	fseek(_file, pos, SEEK_SET);
-	return size;
-}
-
-static const bgfx::Memory* load(const char* _filePath)
-{
-	FILE* file = fopen(_filePath, "rb");
-	if (NULL != file)
-	{
-		uint32_t size = (uint32_t)fsize(file);
-		const bgfx::Memory* mem = bgfx::alloc(size+1);
-		size_t ignore = fread(mem->data, 1, size, file);
-		BX_UNUSED(ignore);
-		fclose(file);
-		mem->data[mem->size-1] = '\0';
-		return mem;
-	}
-
-	return NULL;
-}
-
-static const bgfx::Memory* loadShader(const char* _name)
-{
-	char filePath[512];
-	shaderFilePath(filePath, _name);
-	return load(filePath);
-}
-
-static const bgfx::Memory* loadTexture(const char* _name)
-{
-	char filePath[512];
-	strcpy(filePath, "textures/");
-	strcat(filePath, _name);
-	return load(filePath);
-}
-
-static bgfx::ProgramHandle loadProgram(const char* _vsName, const char* _fsName)
-{
-	const bgfx::Memory* mem;
-
-	// Load vertex shader.
-	mem = loadShader(_vsName);
-	bgfx::ShaderHandle vsh = bgfx::createShader(mem);
-
-	// Load fragment shader.
-	mem = loadShader(_fsName);
-	bgfx::ShaderHandle fsh = bgfx::createShader(mem);
-
-	// Create program from shaders.
-	return bgfx::createProgram(vsh, fsh, true /* destroy shaders when program is destroyed */);
 }
 
 void setViewClearMask(uint32_t _viewMask, uint8_t _flags, uint32_t _rgba, float _depth, uint8_t _stencil)
@@ -380,14 +316,13 @@ struct Uniforms
 			m_lightRgbInnerR[ii][3] = 1.0f;
 		}
 
-		u_params             = bgfx::createUniform("u_params",              bgfx::UniformType::Uniform4fv);
-		u_ambient            = bgfx::createUniform("u_ambient",             bgfx::UniformType::Uniform4fv);
-		u_diffuse            = bgfx::createUniform("u_diffuse",             bgfx::UniformType::Uniform4fv);
-		u_specular_shininess = bgfx::createUniform("u_specular_shininess",  bgfx::UniformType::Uniform4fv);
-		u_color              = bgfx::createUniform("u_color",               bgfx::UniformType::Uniform4fv);
-		u_time               = bgfx::createUniform("u_time",                bgfx::UniformType::Uniform1f );
-		u_lightPosRadius     = bgfx::createUniform("u_lightPosRadius",      bgfx::UniformType::Uniform4fv, MAX_NUM_LIGHTS);
-		u_lightRgbInnerR     = bgfx::createUniform("u_lightRgbInnerR",      bgfx::UniformType::Uniform4fv, MAX_NUM_LIGHTS);
+		u_params             = bgfx::createUniform("u_params",              bgfx::UniformType::Vec4);
+		u_ambient            = bgfx::createUniform("u_ambient",             bgfx::UniformType::Vec4);
+		u_diffuse            = bgfx::createUniform("u_diffuse",             bgfx::UniformType::Vec4);
+		u_specular_shininess = bgfx::createUniform("u_specular_shininess",  bgfx::UniformType::Vec4);
+		u_color              = bgfx::createUniform("u_color",               bgfx::UniformType::Vec4);
+		u_lightPosRadius     = bgfx::createUniform("u_lightPosRadius",      bgfx::UniformType::Vec4, MAX_NUM_LIGHTS);
+		u_lightRgbInnerR     = bgfx::createUniform("u_lightRgbInnerR",      bgfx::UniformType::Vec4, MAX_NUM_LIGHTS);
 	}
 
 	//call this once at initialization
@@ -396,12 +331,6 @@ struct Uniforms
 		bgfx::setUniform(u_ambient,            &m_ambient);
 		bgfx::setUniform(u_diffuse,            &m_diffuse);
 		bgfx::setUniform(u_specular_shininess, &m_specular_shininess);
-	}
-
-	//call this once per frame
-	void submitPerFrameUniforms()
-	{
-		bgfx::setUniform(u_time, &m_time);
 	}
 
 	//call this before each draw call
@@ -420,7 +349,6 @@ struct Uniforms
 		bgfx::destroyUniform(u_diffuse);
 		bgfx::destroyUniform(u_specular_shininess);
 		bgfx::destroyUniform(u_color);
-		bgfx::destroyUniform(u_time);
 		bgfx::destroyUniform(u_lightPosRadius);
 		bgfx::destroyUniform(u_lightRgbInnerR);
 	}
@@ -463,7 +391,6 @@ struct Uniforms
 	bgfx::UniformHandle u_diffuse;
 	bgfx::UniformHandle u_specular_shininess;
 	bgfx::UniformHandle u_color;
-	bgfx::UniformHandle u_time;
 	bgfx::UniformHandle u_lightPosRadius;
 	bgfx::UniformHandle u_lightRgbInnerR;
 };
@@ -875,14 +802,13 @@ struct Mesh
 
 			// Set model matrix for rendering.
 			bgfx::setTransform(_mtx);
-			bgfx::setProgram(_program);
 			bgfx::setIndexBuffer(group.m_ibh);
 			bgfx::setVertexBuffer(group.m_vbh);
 
 			// Set texture
 			if (bgfx::invalidHandle != _texture.idx)
 			{
-				bgfx::setTexture(0, u_texColor, _texture);
+				bgfx::setTexture(0, s_texColor, _texture);
 			}
 
 			// Apply render state
@@ -890,7 +816,7 @@ struct Mesh
 			bgfx::setState(_renderState.m_state, _renderState.m_blendFactorRgba);
 
 			// Submit
-			bgfx::submit(_viewId);
+			bgfx::submit(_viewId, _program);
 
 			// Keep track of submited view ids
 			s_viewMask |= 1 << _viewId;
@@ -920,43 +846,24 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 	// for each renderer.
 	switch (bgfx::getRendererType() )
 	{
-	default:
-	case bgfx::RendererType::Direct3D9:
-		s_shaderPath = "shaders/dx9/";
-		break;
-
-	case bgfx::RendererType::Direct3D11:
-		s_shaderPath = "shaders/dx11/";
-		break;
-
 	case bgfx::RendererType::OpenGL:
-		s_shaderPath = "shaders/glsl/";
+	case bgfx::RendererType::OpenGLES:
 		s_flipV = true;
 		break;
 
-	case bgfx::RendererType::OpenGLES:
-		s_shaderPath = "shaders/gles/";
-		s_flipV = true;
+	default:
 		break;
 	}
 
-	FILE* file = fopen("font/droidsans.ttf", "rb");
-	uint32_t size = (uint32_t)fsize(file);
-	void* data = malloc(size);
-	size_t ignore = fread(data, 1, size, file);
-	BX_UNUSED(ignore);
-	fclose(file);
-
-	imguiCreate(data);
-
-	free(data);
+	// Imgui.
+	imguiCreate();
 
 	PosNormalTexcoordVertex::init();
 
 	s_uniforms.init();
 	s_uniforms.submitConstUniforms();
 
-	u_texColor = bgfx::createUniform("u_texColor", bgfx::UniformType::Uniform1iv);
+	s_texColor = bgfx::createUniform("s_texColor", bgfx::UniformType::Int1);
 
 	bgfx::ProgramHandle programTextureLightning = loadProgram("vs_stencil_texture_lightning", "fs_stencil_texture_lightning");
 	bgfx::ProgramHandle programColorLightning   = loadProgram("vs_stencil_color_lightning",   "fs_stencil_color_lightning"  );
@@ -975,16 +882,9 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 	hplaneMesh.load(s_hplaneVertices, BX_COUNTOF(s_hplaneVertices), PosNormalTexcoordVertex::ms_decl, s_planeIndices, BX_COUNTOF(s_planeIndices) );
 	vplaneMesh.load(s_vplaneVertices, BX_COUNTOF(s_vplaneVertices), PosNormalTexcoordVertex::ms_decl, s_planeIndices, BX_COUNTOF(s_planeIndices) );
 
-	const bgfx::Memory* mem;
-
-	mem = loadTexture("figure-rgba.dds");
-	bgfx::TextureHandle figureTex = bgfx::createTexture(mem);
-
-	mem = loadTexture("flare.dds");
-	bgfx::TextureHandle flareTex = bgfx::createTexture(mem);
-
-	mem = loadTexture("fieldstone-rgba.dds");
-	bgfx::TextureHandle fieldstoneTex = bgfx::createTexture(mem);
+	bgfx::TextureHandle figureTex     = loadTexture("figure-rgba.dds");
+	bgfx::TextureHandle flareTex      = loadTexture("flare.dds");
+	bgfx::TextureHandle fieldstoneTex = loadTexture("fieldstone-rgba.dds");
 
 	// Setup lights.
 	const float rgbInnerR[][4] =
@@ -1005,7 +905,7 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 		lightRgbInnerR[ii][2] = rgbInnerR[index][2];
 		lightRgbInnerR[ii][3] = rgbInnerR[index][3];
 	}
-	memcpy(s_uniforms.m_lightRgbInnerR, lightRgbInnerR, MAX_NUM_LIGHTS * 4*sizeof(float));
+	memcpy(s_uniforms.m_lightRgbInnerR, lightRgbInnerR, MAX_NUM_LIGHTS * 4*sizeof(float) );
 
 	// Set view and projection matrices.
 	const float aspect = float(viewState.m_width)/float(viewState.m_height);
@@ -1042,9 +942,10 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 	{
 		imguiBeginFrame(mouseState.m_mx
 			, mouseState.m_my
-			, (mouseState.m_buttons[entry::MouseButton::Left  ] ? IMGUI_MBUT_LEFT  : 0)
-			| (mouseState.m_buttons[entry::MouseButton::Right ] ? IMGUI_MBUT_RIGHT : 0)
-			, 0
+			, (mouseState.m_buttons[entry::MouseButton::Left  ] ? IMGUI_MBUT_LEFT   : 0)
+			| (mouseState.m_buttons[entry::MouseButton::Right ] ? IMGUI_MBUT_RIGHT  : 0)
+			| (mouseState.m_buttons[entry::MouseButton::Middle] ? IMGUI_MBUT_MIDDLE : 0)
+			, mouseState.m_mz
 			, viewState.m_width
 			, viewState.m_height
 			);
@@ -1091,7 +992,6 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 		s_uniforms.m_params.m_lightCount      = settings_numLights;
 		s_uniforms.m_params.m_lightIndex      = 0.0f;
 		s_uniforms.m_color[3]                 = settings_reflectionValue;
-		s_uniforms.submitPerFrameUniforms();
 
 		// Time.
 		int64_t now = bx::getHPCounter();
@@ -1130,12 +1030,12 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 		const float radius = (scene == StencilReflectionScene) ? 15.0f : 25.0f;
 		for (uint8_t ii = 0; ii < numLights; ++ii)
 		{
-			lightPosRadius[ii][0] = sin( (lightTimeAccumulator*1.1f + ii*0.03f + ii*bx::piHalf*1.07f ) )*20.0f;
-			lightPosRadius[ii][1] = 8.0f + (1.0f - cos( (lightTimeAccumulator*1.5f + ii*0.29f + bx::piHalf*1.49f ) ))*4.0f;
-			lightPosRadius[ii][2] = cos( (lightTimeAccumulator*1.3f + ii*0.13f + ii*bx::piHalf*1.79f ) )*20.0f;
+			lightPosRadius[ii][0] = sinf( (lightTimeAccumulator*1.1f + ii*0.03f + ii*bx::piHalf*1.07f ) )*20.0f;
+			lightPosRadius[ii][1] = 8.0f + (1.0f - cosf( (lightTimeAccumulator*1.5f + ii*0.29f + bx::piHalf*1.49f ) ) )*4.0f;
+			lightPosRadius[ii][2] = cosf( (lightTimeAccumulator*1.3f + ii*0.13f + ii*bx::piHalf*1.79f ) )*20.0f;
 			lightPosRadius[ii][3] = radius;
 		}
-		memcpy(s_uniforms.m_lightPosRadius, lightPosRadius, numLights * 4*sizeof(float));
+		memcpy(s_uniforms.m_lightPosRadius, lightPosRadius, numLights * 4*sizeof(float) );
 
 		// Floor position.
 		float floorMtx[16];
@@ -1202,15 +1102,15 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 				, 0.0f
 				, 0.0f
 				, 0.0f
-				, sin(ii * 2.0f + 13.0f - sceneTimeAccumulator) * 13.0f
+				, sinf(ii * 2.0f + 13.0f - sceneTimeAccumulator) * 13.0f
 				, 4.0f
-				, cos(ii * 2.0f + 13.0f - sceneTimeAccumulator) * 13.0f
+				, cosf(ii * 2.0f + 13.0f - sceneTimeAccumulator) * 13.0f
 				);
 		}
 
 		// Make sure at the beginning everything gets cleared.
-		clearView(0, BGFX_CLEAR_COLOR_BIT | BGFX_CLEAR_DEPTH_BIT | BGFX_CLEAR_STENCIL_BIT, clearValues);
-		bgfx::submit(0);
+		clearView(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH | BGFX_CLEAR_STENCIL, clearValues);
+		bgfx::touch(0);
 		s_viewMask |= 1;
 
 		// Bunny and columns color.
@@ -1238,7 +1138,7 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 				// Second pass - Draw reflected objects.
 
 				// Clear depth from previous pass.
-				clearView(RENDER_VIEWID_RANGE1_PASS_1, BGFX_CLEAR_DEPTH_BIT, clearValues);
+				clearView(RENDER_VIEWID_RANGE1_PASS_1, BGFX_CLEAR_DEPTH, clearValues);
 
 				// Compute reflected matrix.
 				float reflectMtx[16];
@@ -1253,7 +1153,7 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 					bx::vec3MulMtx(reflectedLights[ii], lightPosRadius[ii], reflectMtx);
 					reflectedLights[ii][3] = lightPosRadius[ii][3];
 				}
-				memcpy(s_uniforms.m_lightPosRadius, reflectedLights, numLights * 4*sizeof(float));
+				memcpy(s_uniforms.m_lightPosRadius, reflectedLights, numLights * 4*sizeof(float) );
 
 				// Reflect and submit bunny.
 				float mtxReflectedBunny[16];
@@ -1277,8 +1177,7 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 				}
 
 				// Set lights back.
-				memcpy(s_uniforms.m_lightPosRadius, lightPosRadius, numLights * 4*sizeof(float));
-
+				memcpy(s_uniforms.m_lightPosRadius, lightPosRadius, numLights * 4*sizeof(float) );
 				// Third pass - Blend plane.
 
 				// Floor.
@@ -1307,6 +1206,7 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 						, s_renderStates[RenderState::StencilReflection_DrawScene]
 						);
 				}
+
 			}
 			break;
 
@@ -1352,7 +1252,7 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 				for (uint8_t ii = 0, viewId = RENDER_VIEWID_RANGE5_PASS_6; ii < numLights; ++ii, ++viewId)
 				{
 					// Clear stencil for this light source.
-					clearView(viewId, BGFX_CLEAR_STENCIL_BIT, clearValues);
+					clearView(viewId, BGFX_CLEAR_STENCIL, clearValues);
 
 					// Draw shadow projection of scene objects.
 
@@ -1409,10 +1309,10 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 						);
 
 					// Cubes.
-					for (uint8_t ii = 0; ii < numCubes; ++ii)
+					for (uint8_t jj = 0; jj < numCubes; ++jj)
 					{
 						cubeMesh.submit(viewId
-							, cubeMtx[ii]
+							, cubeMtx[jj]
 							, programTextureLightning
 							, s_renderStates[RenderState::ProjectionShadows_DrawDiffuse]
 							, figureTex
@@ -1497,7 +1397,7 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 	bgfx::destroyProgram(programColorBlack);
 	bgfx::destroyProgram(programTexture);
 
-	bgfx::destroyUniform(u_texColor);
+	bgfx::destroyUniform(s_texColor);
 
 	s_uniforms.destroy();
 

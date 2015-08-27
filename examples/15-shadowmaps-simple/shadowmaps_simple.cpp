@@ -86,9 +86,9 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 	bgfx::setDebug(debug);
 
 	// Uniforms.
-	bgfx::UniformHandle u_shadowMap = bgfx::createUniform("u_shadowMap", bgfx::UniformType::Uniform1iv);
-	bgfx::UniformHandle u_lightPos  = bgfx::createUniform("u_lightPos",  bgfx::UniformType::Uniform4fv);
-	bgfx::UniformHandle u_lightMtx  = bgfx::createUniform("u_lightMtx",  bgfx::UniformType::Uniform4x4fv);
+	bgfx::UniformHandle u_shadowMap = bgfx::createUniform("u_shadowMap", bgfx::UniformType::Int1);
+	bgfx::UniformHandle u_lightPos  = bgfx::createUniform("u_lightPos",  bgfx::UniformType::Vec4);
+	bgfx::UniformHandle u_lightMtx  = bgfx::createUniform("u_lightMtx",  bgfx::UniformType::Mat4);
 
 	// Vertex declarations.
 	bgfx::VertexDecl PosNormalDecl;
@@ -178,7 +178,7 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 	state[1]->m_viewId  = RENDER_SCENE_PASS_ID;
 	state[1]->m_numTextures = 1;
 	state[1]->m_textures[0].m_flags = UINT32_MAX;
-	state[1]->m_textures[0].m_stage = 4;
+	state[1]->m_textures[0].m_stage = 0;
 	state[1]->m_textures[0].m_sampler = u_shadowMap;
 	state[1]->m_textures[0].m_texture = shadowMapTexture;
 
@@ -186,8 +186,8 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 	float view[16];
 	float proj[16];
 
-	const float eye[3] = { 0.0f, 30.0f, -60.0f };
-	const float at[3]  = { 0.0f, 5.0f, 0.0f };
+	float eye[3] = { 0.0f, 30.0f, -60.0f };
+	float at[3]  = { 0.0f,  5.0f,   0.0f };
 	bx::mtxLookAt(view, eye, at);
 
 	const float aspect = float(int32_t(width) ) / float(int32_t(height) );
@@ -221,9 +221,9 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 
 		// Setup lights.
 		float lightPos[4];
-		lightPos[0] = -cos(timeAccumulatorLight);
+		lightPos[0] = -cosf(timeAccumulatorLight);
 		lightPos[1] = -1.0f;
-		lightPos[2] = -sin(timeAccumulatorLight);
+		lightPos[2] = -sinf(timeAccumulatorLight);
 		lightPos[3] = 0.0f;
 
 		bgfx::setUniform(u_lightPos, lightPos);
@@ -261,13 +261,14 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 		float lightView[16];
 		float lightProj[16];
 
-		const float eye[3] =
-		{
-			-lightPos[0],
-			-lightPos[1],
-			-lightPos[2],
-		};
-		const float at[3] = { 0.0f, 0.0f, 0.0f };
+		eye[0] = -lightPos[0];
+		eye[1] = -lightPos[1];
+		eye[2] = -lightPos[2];
+
+		at[0] = 0.0f;
+		at[1] = 0.0f;
+		at[2] = 0.0f;
+
 		bx::mtxLookAt(lightView, eye, at);
 
 		const float area = 30.0f;
@@ -282,12 +283,12 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 
 		// Clear backbuffer and shadowmap framebuffer at beginning.
 		bgfx::setViewClear(RENDER_SHADOW_PASS_ID
-			, BGFX_CLEAR_COLOR_BIT | BGFX_CLEAR_DEPTH_BIT
+			, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH
 			, 0x303030ff, 1.0f, 0
 			);
 
 		bgfx::setViewClear(RENDER_SCENE_PASS_ID
-			, BGFX_CLEAR_COLOR_BIT | BGFX_CLEAR_DEPTH_BIT
+			, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH
 			, 0x303030ff, 1.0f, 0
 			);
 
@@ -326,29 +327,31 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 						);
 			}
 			bgfx::setUniform(u_lightMtx, lightMtx);
-			bgfx::setProgram(st.m_program);
 			bgfx::setIndexBuffer(ibh);
 			bgfx::setVertexBuffer(vbh);
 			bgfx::setState(st.m_state);
-			bgfx::submit(st.m_viewId);
+			bgfx::submit(st.m_viewId, st.m_program);
 		}
 
 		// Bunny.
 		bx::mtxMul(lightMtx, mtxBunny, mtxShadow);
 		bgfx::setUniform(u_lightMtx, lightMtx);
 		meshSubmit(bunny, &state[0], 1, mtxBunny);
+		bgfx::setUniform(u_lightMtx, lightMtx);
 		meshSubmit(bunny, &state[1], 1, mtxBunny);
 
 		// Hollow cube.
 		bx::mtxMul(lightMtx, mtxHollowcube, mtxShadow);
 		bgfx::setUniform(u_lightMtx, lightMtx);
 		meshSubmit(hollowcube, &state[0], 1, mtxHollowcube);
+		bgfx::setUniform(u_lightMtx, lightMtx);
 		meshSubmit(hollowcube, &state[1], 1, mtxHollowcube);
 
 		// Cube.
 		bx::mtxMul(lightMtx, mtxCube, mtxShadow);
 		bgfx::setUniform(u_lightMtx, lightMtx);
 		meshSubmit(cube, &state[0], 1, mtxCube);
+		bgfx::setUniform(u_lightMtx, lightMtx);
 		meshSubmit(cube, &state[1], 1, mtxCube);
 
 		// Advance to next frame. Rendering thread will be kicked to

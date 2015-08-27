@@ -6,6 +6,8 @@
 #ifndef ENTRY_PRIVATE_H_HEADER_GUARD
 #define ENTRY_PRIVATE_H_HEADER_GUARD
 
+#define TINYSTL_ALLOCATOR entry::TinyStlAllocator
+
 #include <bx/spscqueue.h>
 
 #include "entry.h"
@@ -15,8 +17,13 @@
 #	define ENTRY_CONFIG_USE_SDL 0
 #endif // ENTRY_CONFIG_USE_SDL
 
-#if !ENTRY_CONFIG_USE_SDL && \
-	!defined(ENTRY_CONFIG_USE_NATIVE)
+#ifndef ENTRY_CONFIG_USE_GLFW
+#	define ENTRY_CONFIG_USE_GLFW 0
+#endif // ENTRY_CONFIG_USE_GLFW
+
+#if !defined(ENTRY_CONFIG_USE_NATIVE) \
+	&& !ENTRY_CONFIG_USE_SDL \
+	&& !ENTRY_CONFIG_USE_GLFW
 #	define ENTRY_CONFIG_USE_NATIVE 1
 #else
 #	define ENTRY_CONFIG_USE_NATIVE 0
@@ -37,12 +44,24 @@
 #	error "Both ENTRY_DEFAULT_WIDTH and ENTRY_DEFAULT_HEIGHT must be defined."
 #endif // ENTRY_DEFAULT_WIDTH
 
+#ifndef ENTRY_CONFIG_IMPLEMENT_DEFAULT_ALLOCATOR
+#	define ENTRY_CONFIG_IMPLEMENT_DEFAULT_ALLOCATOR 1
+#endif // ENTRY_CONFIG_IMPLEMENT_DEFAULT_ALLOCATOR
+
 #define ENTRY_IMPLEMENT_EVENT(_class, _type) \
 			_class(WindowHandle _handle) : Event(_type, _handle) {}
 
 namespace entry
 {
+	struct TinyStlAllocator
+	{
+		static void* static_allocate(size_t _bytes);
+		static void static_deallocate(void* _ptr, size_t /*_bytes*/);
+	};
+
 	int main(int _argc, char** _argv);
+
+	char keyToAscii(Key::Enum _key, uint8_t _modifiers);
 
 	struct Event
 	{
@@ -56,6 +75,7 @@ namespace entry
 			Mouse,
 			Size,
 			Window,
+			Suspend,
 		};
 
 		Event(Enum _type)
@@ -135,6 +155,13 @@ namespace entry
 		void* m_nwh;
 	};
 
+	struct SuspendEvent : public Event
+	{
+		ENTRY_IMPLEMENT_EVENT(SuspendEvent, Event::Suspend);
+
+		Suspend::Enum m_state;
+	};
+
 	const Event* poll();
 	const Event* poll(WindowHandle _handle);
 	void release(const Event* _event);
@@ -142,6 +169,14 @@ namespace entry
 	class EventQueue
 	{
 	public:
+		~EventQueue()
+		{
+			for (const Event* ev = poll(); NULL != ev; ev = poll() )
+			{
+				release(ev);
+			}
+		}
+
 		void postAxisEvent(WindowHandle _handle, GamepadHandle _gamepad, GamepadAxis::Enum _axis, int32_t _value)
 		{
 			AxisEvent* ev = new AxisEvent(_handle);
@@ -218,6 +253,13 @@ namespace entry
 		{
 			WindowEvent* ev = new WindowEvent(_handle);
 			ev->m_nwh = _nwh;
+			m_queue.push(ev);
+		}
+
+		void postSuspendEvent(WindowHandle _handle, Suspend::Enum _state)
+		{
+			SuspendEvent* ev = new SuspendEvent(_handle);
+			ev->m_state = _state;
 			m_queue.push(ev);
 		}
 

@@ -17,6 +17,7 @@ namespace std { namespace tr1 {} }
 using namespace std::tr1;
 
 #include "common.h"
+#include "bgfx_utils.h"
 
 #include <bgfx.h>
 #include <bx/timer.h>
@@ -110,79 +111,14 @@ static const uint16_t s_planeIndices[] =
 	1, 3, 2,
 };
 
-static const char* s_shaderPath = NULL;
 static bool s_oglNdc = false;
 static float s_texelHalf = 0.0f;
 
 static uint32_t s_viewMask = 0;
 
-static bgfx::UniformHandle u_texColor;
-static bgfx::UniformHandle u_texStencil;
+static bgfx::UniformHandle s_texColor;
+static bgfx::UniformHandle s_texStencil;
 static bgfx::FrameBufferHandle s_stencilFb;
-
-static void shaderFilePath(char* _out, const char* _name)
-{
-	strcpy(_out, s_shaderPath);
-	strcat(_out, _name);
-	strcat(_out, ".bin");
-}
-
-long int fsize(FILE* _file)
-{
-	long int pos = ftell(_file);
-	fseek(_file, 0L, SEEK_END);
-	long int size = ftell(_file);
-	fseek(_file, pos, SEEK_SET);
-	return size;
-}
-
-static const bgfx::Memory* load(const char* _filePath)
-{
-	FILE* file = fopen(_filePath, "rb");
-	if (NULL != file)
-	{
-		uint32_t size = (uint32_t)fsize(file);
-		const bgfx::Memory* mem = bgfx::alloc(size+1);
-		size_t ignore = fread(mem->data, 1, size, file);
-		BX_UNUSED(ignore);
-		fclose(file);
-		mem->data[mem->size-1] = '\0';
-		return mem;
-	}
-
-	return NULL;
-}
-
-static const bgfx::Memory* loadShader(const char* _name)
-{
-	char filePath[512];
-	shaderFilePath(filePath, _name);
-	return load(filePath);
-}
-
-static const bgfx::Memory* loadTexture(const char* _name)
-{
-	char filePath[512];
-	strcpy(filePath, "textures/");
-	strcat(filePath, _name);
-	return load(filePath);
-}
-
-static bgfx::ProgramHandle loadProgram(const char* _vsName, const char* _fsName)
-{
-	const bgfx::Memory* mem;
-
-	// Load vertex shader.
-	mem = loadShader(_vsName);
-	bgfx::ShaderHandle vsh = bgfx::createShader(mem);
-
-	// Load fragment shader.
-	mem = loadShader(_fsName);
-	bgfx::ShaderHandle fsh = bgfx::createShader(mem);
-
-	// Create program from shaders.
-	return bgfx::createProgram(vsh, fsh, true /* destroy shaders when program is destroyed */);
-}
 
 void setViewClearMask(uint32_t _viewMask, uint8_t _flags, uint32_t _rgba, float _depth, uint8_t _stencil)
 {
@@ -314,17 +250,16 @@ struct Uniforms
 		m_virtualLightPos_extrusionDist[2] = 0.0f;
 		m_virtualLightPos_extrusionDist[3] = 100.0f;
 
-		u_params                        = bgfx::createUniform("u_params",                        bgfx::UniformType::Uniform4fv);
-		u_svparams                      = bgfx::createUniform("u_svparams",                      bgfx::UniformType::Uniform4fv);
-		u_ambient                       = bgfx::createUniform("u_ambient",                       bgfx::UniformType::Uniform4fv);
-		u_diffuse                       = bgfx::createUniform("u_diffuse",                       bgfx::UniformType::Uniform4fv);
-		u_specular_shininess            = bgfx::createUniform("u_specular_shininess",            bgfx::UniformType::Uniform4fv);
-		u_fog                           = bgfx::createUniform("u_fog",                           bgfx::UniformType::Uniform4fv);
-		u_color                         = bgfx::createUniform("u_color",                         bgfx::UniformType::Uniform4fv);
-		u_time                          = bgfx::createUniform("u_time",                          bgfx::UniformType::Uniform1f );
-		u_lightPosRadius                = bgfx::createUniform("u_lightPosRadius",                bgfx::UniformType::Uniform4fv);
-		u_lightRgbInnerR                = bgfx::createUniform("u_lightRgbInnerR",                bgfx::UniformType::Uniform4fv);
-		u_virtualLightPos_extrusionDist = bgfx::createUniform("u_virtualLightPos_extrusionDist", bgfx::UniformType::Uniform4fv);
+		u_params                        = bgfx::createUniform("u_params",                        bgfx::UniformType::Vec4);
+		u_svparams                      = bgfx::createUniform("u_svparams",                      bgfx::UniformType::Vec4);
+		u_ambient                       = bgfx::createUniform("u_ambient",                       bgfx::UniformType::Vec4);
+		u_diffuse                       = bgfx::createUniform("u_diffuse",                       bgfx::UniformType::Vec4);
+		u_specular_shininess            = bgfx::createUniform("u_specular_shininess",            bgfx::UniformType::Vec4);
+		u_fog                           = bgfx::createUniform("u_fog",                           bgfx::UniformType::Vec4);
+		u_color                         = bgfx::createUniform("u_color",                         bgfx::UniformType::Vec4);
+		u_lightPosRadius                = bgfx::createUniform("u_lightPosRadius",                bgfx::UniformType::Vec4);
+		u_lightRgbInnerR                = bgfx::createUniform("u_lightRgbInnerR",                bgfx::UniformType::Vec4);
+		u_virtualLightPos_extrusionDist = bgfx::createUniform("u_virtualLightPos_extrusionDist", bgfx::UniformType::Vec4);
 	}
 
 	//call this once at initialization
@@ -334,12 +269,6 @@ struct Uniforms
 		bgfx::setUniform(u_diffuse,            &m_diffuse);
 		bgfx::setUniform(u_specular_shininess, &m_specular_shininess);
 		bgfx::setUniform(u_fog,                &m_fog);
-	}
-
-	//call this once per frame
-	void submitPerFrameUniforms()
-	{
-		bgfx::setUniform(u_time, &m_time);
 	}
 
 	//call this before each draw call
@@ -362,7 +291,6 @@ struct Uniforms
 		bgfx::destroyUniform(u_specular_shininess);
 		bgfx::destroyUniform(u_fog);
 		bgfx::destroyUniform(u_color);
-		bgfx::destroyUniform(u_time);
 		bgfx::destroyUniform(u_lightPosRadius);
 		bgfx::destroyUniform(u_lightRgbInnerR);
 		bgfx::destroyUniform(u_virtualLightPos_extrusionDist);
@@ -415,7 +343,6 @@ struct Uniforms
 	bgfx::UniformHandle u_specular_shininess;
 	bgfx::UniformHandle u_fog;
 	bgfx::UniformHandle u_color;
-	bgfx::UniformHandle u_time;
 	bgfx::UniformHandle u_lightPosRadius;
 	bgfx::UniformHandle u_lightRgbInnerR;
 	bgfx::UniformHandle u_virtualLightPos_extrusionDist;
@@ -640,12 +567,18 @@ struct ClearValues
 	uint8_t  m_clearStencil;
 };
 
-void submit(uint8_t _id, int32_t _depth = 0)
+void submit(uint8_t _id, bgfx::ProgramHandle _handle, int32_t _depth = 0)
 {
-	bgfx::submit(_id, _depth);
+	bgfx::submit(_id, _handle, _depth);
 
 	// Keep track of submited view ids.
 	s_viewMask |= 1 << _id;
+}
+
+void touch(uint8_t _id)
+{
+	bgfx::ProgramHandle handle = BGFX_INVALID_HANDLE;
+	::submit(_id, handle);
 }
 
 struct Aabb
@@ -739,7 +672,7 @@ struct HalfEdges
 			m_offsets[ii] = uint32_t(he - m_data);
 
 			std::vector<uint16_t>& row = edges[ii];
-			for (uint32_t jj = 0, end = (uint32_t)row.size(); jj < end; ++jj)
+			for (uint32_t jj = 0, size = (uint32_t)row.size(); jj < size; ++jj)
 			{
 				he->m_secondIndex = row[jj];
 				he->m_marked = false;
@@ -916,7 +849,7 @@ struct Group
 
 		//Init faces and edges.
 		m_faces.reserve(m_numIndices/3); //1 face = 3 indices
-		m_edges = (Edge*)malloc(m_numIndices * sizeof(Edge)); //1 triangle = 3 indices = 3 edges.
+		m_edges = (Edge*)malloc(m_numIndices * sizeof(Edge) ); //1 triangle = 3 indices = 3 edges.
 		m_edgePlanesUnalignedPtr = (Plane*)malloc(m_numIndices * sizeof(Plane) + 15);
 		m_edgePlanes = (Plane*)bx::alignPtr(m_edgePlanesUnalignedPtr, 0, 16);
 
@@ -944,9 +877,9 @@ struct Group
 		for (uint32_t ii = 0, size = m_numIndices/3; ii < size; ++ii)
 		{
 			const uint16_t* indices = &m_indices[ii*3];
-			const uint16_t i0 = indices[0];
-			const uint16_t i1 = indices[1];
-			const uint16_t i2 = indices[2];
+			uint16_t i0 = indices[0];
+			uint16_t i1 = indices[1];
+			uint16_t i2 = indices[2];
 			const float* v0 = (float*)&m_vertices[i0*stride];
 			const float* v1 = (float*)&m_vertices[i1*stride];
 			const float* v2 = (float*)&m_vertices[i2*stride];
@@ -963,15 +896,15 @@ struct Group
 
 			//Use unique indices for EdgeMap.
 			const uint16_t* uindices = &uniqueIndices[ii*3];
-			const uint16_t ui0 = uindices[0];
-			const uint16_t ui1 = uindices[1];
-			const uint16_t ui2 = uindices[2];
+			i0 = uindices[0];
+			i1 = uindices[1];
+			i2 = uindices[2];
 
 			const uint16_t triangleEdge[3][2] =
 			{
-				{ui0, ui1},
-				{ui1, ui2},
-				{ui2, ui0},
+				{ i0, i1 },
+				{ i1, i2 },
+				{ i2, i0 },
 			};
 
 			for (uint8_t jj = 0; jj < 3; ++jj)
@@ -983,7 +916,7 @@ struct Group
 				std::pair<uint16_t, uint16_t> keyInv = std::make_pair(ui1, ui0);
 
 				EdgeMap::iterator iter = edgeMap.find(keyInv);
-				if (iter != edgeMap.end())
+				if (iter != edgeMap.end() )
 				{
 					EdgeAndPlane& ep = iter->second;
 					memcpy(ep.m_plane[ep.m_faceIndex].m_plane, plane, 4*sizeof(float) );
@@ -1008,8 +941,8 @@ struct Group
 			Edge* edge = &m_edges[m_numEdges];
 			Plane* plane = &m_edgePlanes[index];
 
-			memcpy(edge, iter->second.m_faceReverseOrder, sizeof(Edge));
-			memcpy(plane, iter->second.m_plane, 2 * sizeof(Plane));
+			memcpy(edge, iter->second.m_faceReverseOrder, sizeof(Edge) );
+			memcpy(plane, iter->second.m_plane, 2 * sizeof(Plane) );
 
 			m_numEdges++;
 			index += 2;
@@ -1234,10 +1167,6 @@ struct Model
 			// Set uniforms
 			s_uniforms.submitPerDrawUniforms();
 
-			// Set program
-			BX_CHECK(bgfx::invalidHandle != m_program, "Error, program is not set.");
-			bgfx::setProgram(m_program);
-
 			// Set transform
 			bgfx::setTransform(_mtx);
 
@@ -1248,15 +1177,16 @@ struct Model
 			// Set textures
 			if (bgfx::invalidHandle != m_texture.idx)
 			{
-				bgfx::setTexture(0, u_texColor, m_texture);
+				bgfx::setTexture(0, s_texColor, m_texture);
 			}
-			bgfx::setTexture(7, u_texStencil, s_stencilFb);
+			bgfx::setTexture(1, s_texStencil, s_stencilFb);
 
 			// Apply render state
 			::setRenderState(_renderState);
 
 			// Submit
-			::submit(_viewId);
+			BX_CHECK(bgfx::invalidHandle != m_program, "Error, program is not set.");
+			::submit(_viewId, m_program);
 		}
 	}
 
@@ -1575,80 +1505,119 @@ void shadowVolumeCreate(ShadowVolume& _shadowVolume
 	}
 	else // ShadowVolumeAlgorithm::EdgeBased:
 	{
-		uint32_t ii = 0;
+		{
+			uint32_t ii = 0;
 
 #if SV_USE_SIMD
-		uint32_t numEdgesRounded = numEdges & (~0x1);
+			uint32_t numEdgesRounded = numEdges & (~0x1);
 
-		using namespace bx;
+			using namespace bx;
 
-		const float4_t lx = float4_splat(_light[0]);
-		const float4_t ly = float4_splat(_light[1]);
-		const float4_t lz = float4_splat(_light[2]);
+			const float4_t lx = float4_splat(_light[0]);
+			const float4_t ly = float4_splat(_light[1]);
+			const float4_t lz = float4_splat(_light[2]);
 
-		for (; ii < numEdgesRounded; ii+=2)
-		{
-			const Edge& edge0 = edges[ii];
-			const Edge& edge1 = edges[ii+1];
-			const Plane* edgePlane0 = &edgePlanes[ii*2];
-			const Plane* edgePlane1 = &edgePlanes[ii*2 + 2];
-
-			const float4_t reverse = float4_ild(edge0.m_faceReverseOrder[0]
-						 , edge1.m_faceReverseOrder[0]
-						 , edge0.m_faceReverseOrder[1]
-						 , edge1.m_faceReverseOrder[1]
-						 );
-
-			const float4_t v0 = float4_ld(edgePlane0[0].m_plane);
-			const float4_t v1 = float4_ld(edgePlane1[0].m_plane);
-			const float4_t v2 = float4_ld(edgePlane0[1].m_plane);
-			const float4_t v3 = float4_ld(edgePlane1[1].m_plane);
-
-			const float4_t xxyy0 = float4_shuf_xAyB(v0, v2);
-			const float4_t zzww0 = float4_shuf_zCwD(v0, v2);
-			const float4_t xxyy1 = float4_shuf_xAyB(v1, v3);
-			const float4_t zzww1 = float4_shuf_zCwD(v1, v3);
-
-			const float4_t vX = float4_shuf_xAyB(xxyy0, xxyy1);
-			const float4_t vY = float4_shuf_zCwD(xxyy0, xxyy1);
-			const float4_t vZ = float4_shuf_xAyB(zzww0, zzww1);
-			const float4_t vW = float4_shuf_zCwD(zzww0, zzww1);
-
-			const float4_t r0 = float4_mul(vX, lx);
-			const float4_t r1 = float4_mul(vY, ly);
-			const float4_t r2 = float4_mul(vZ, lz);
-
-			const float4_t dot = float4_add(r0, float4_add(r1, r2));
-			const float4_t f = float4_add(dot, vW);
-
-			const float4_t zero = float4_zero();
-			const float4_t mask = float4_cmpgt(f, zero);
-			const float4_t onef = float4_splat(1.0f);
-			const float4_t tmp0 = float4_and(mask, onef);
-			const float4_t tmp1 = float4_ftoi(tmp0);
-			const float4_t tmp2 = float4_xor(tmp1, reverse);
-			const float4_t tmp3 = float4_sll(tmp2, 1);
-			const float4_t onei = float4_isplat(1);
-			const float4_t tmp4 = float4_isub(tmp3, onei);
-
-			BX_ALIGN_DECL_16(int32_t res[4]);
-			float4_st(&res, tmp4);
-
-			for (uint16_t jj = 0; jj < 2; ++jj)
+			for (; ii < numEdgesRounded; ii+=2)
 			{
-				int16_t k = res[jj] + res[jj+2];
-				if (k != 0)
-				{
-					float* v0 = (float*)&vertices[edges[ii+jj].m_i0*_stride];
-					float* v1 = (float*)&vertices[edges[ii+jj].m_i1*_stride];
-					verticesSide[vsideI++] = VertexData(v0, 0.0f, float(k));
-					verticesSide[vsideI++] = VertexData(v0, 1.0f, float(k));
-					verticesSide[vsideI++] = VertexData(v1, 0.0f, float(k));
-					verticesSide[vsideI++] = VertexData(v1, 1.0f, float(k));
+				const Edge& edge0 = edges[ii];
+				const Edge& edge1 = edges[ii+1];
+				const Plane* edgePlane0 = &edgePlanes[ii*2];
+				const Plane* edgePlane1 = &edgePlanes[ii*2 + 2];
 
-					k = _textureAsStencil ? 1 : k;
-					uint16_t winding = uint16_t(k > 0);
-					for (uint8_t ii = 0, end = abs(k); ii < end; ++ii)
+				const float4_t reverse =
+					float4_ild(edge0.m_faceReverseOrder[0]
+							, edge1.m_faceReverseOrder[0]
+							, edge0.m_faceReverseOrder[1]
+							, edge1.m_faceReverseOrder[1]
+							);
+
+				const float4_t p00 = float4_ld(edgePlane0[0].m_plane);
+				const float4_t p10 = float4_ld(edgePlane1[0].m_plane);
+				const float4_t p01 = float4_ld(edgePlane0[1].m_plane);
+				const float4_t p11 = float4_ld(edgePlane1[1].m_plane);
+
+				const float4_t xxyy0 = float4_shuf_xAyB(p00, p01);
+				const float4_t zzww0 = float4_shuf_zCwD(p00, p01);
+				const float4_t xxyy1 = float4_shuf_xAyB(p10, p11);
+				const float4_t zzww1 = float4_shuf_zCwD(p10, p11);
+
+				const float4_t vX = float4_shuf_xAyB(xxyy0, xxyy1);
+				const float4_t vY = float4_shuf_zCwD(xxyy0, xxyy1);
+				const float4_t vZ = float4_shuf_xAyB(zzww0, zzww1);
+				const float4_t vW = float4_shuf_zCwD(zzww0, zzww1);
+
+				const float4_t r0 = float4_mul(vX, lx);
+				const float4_t r1 = float4_mul(vY, ly);
+				const float4_t r2 = float4_mul(vZ, lz);
+
+				const float4_t dot = float4_add(r0, float4_add(r1, r2) );
+				const float4_t f = float4_add(dot, vW);
+
+				const float4_t zero = float4_zero();
+				const float4_t mask = float4_cmpgt(f, zero);
+				const float4_t onef = float4_splat(1.0f);
+				const float4_t tmp0 = float4_and(mask, onef);
+				const float4_t tmp1 = float4_ftoi(tmp0);
+				const float4_t tmp2 = float4_xor(tmp1, reverse);
+				const float4_t tmp3 = float4_sll(tmp2, 1);
+				const float4_t onei = float4_isplat(1);
+				const float4_t tmp4 = float4_isub(tmp3, onei);
+
+				BX_ALIGN_DECL_16(int32_t res[4]);
+				float4_st(&res, tmp4);
+
+				for (uint16_t jj = 0; jj < 2; ++jj)
+				{
+					int16_t kk = res[jj] + res[jj+2];
+					if (kk != 0)
+					{
+						float* v0 = (float*)&vertices[edges[ii+jj].m_i0*_stride];
+						float* v1 = (float*)&vertices[edges[ii+jj].m_i1*_stride];
+						verticesSide[vsideI++] = VertexData(v0, 0.0f, float(kk) );
+						verticesSide[vsideI++] = VertexData(v0, 1.0f, float(kk) );
+						verticesSide[vsideI++] = VertexData(v1, 0.0f, float(kk) );
+						verticesSide[vsideI++] = VertexData(v1, 1.0f, float(kk) );
+
+						kk = _textureAsStencil ? 1 : kk;
+						uint16_t winding = uint16_t(kk > 0);
+						for (uint8_t ll = 0, end = abs(kk); ll < end; ++ll)
+						{
+							indicesSide[sideI++] = indexSide;
+							indicesSide[sideI++] = indexSide + 2 - winding;
+							indicesSide[sideI++] = indexSide + 1 + winding;
+
+							indicesSide[sideI++] = indexSide + 2;
+							indicesSide[sideI++] = indexSide + 3 - winding*2;
+							indicesSide[sideI++] = indexSide + 1 + winding*2;
+						}
+
+						indexSide += 4;
+					}
+				}
+			}
+#endif
+
+			for (; ii < numEdges; ++ii)
+			{
+				const Edge& edge = edges[ii];
+				const Plane* edgePlane = &edgePlanes[ii*2];
+
+				int16_t s0 = ( (vec3Dot(edgePlane[0].m_plane, _light) + edgePlane[0].m_plane[3]) > 0.0f) ^ edge.m_faceReverseOrder[0];
+				int16_t s1 = ( (vec3Dot(edgePlane[1].m_plane, _light) + edgePlane[1].m_plane[3]) > 0.0f) ^ edge.m_faceReverseOrder[1];
+				int16_t kk = ( (s0 + s1) << 1) - 2;
+
+				if (kk != 0)
+				{
+					float* v0 = (float*)&vertices[edge.m_i0*_stride];
+					float* v1 = (float*)&vertices[edge.m_i1*_stride];
+					verticesSide[vsideI++] = VertexData(v0, 0.0f, kk);
+					verticesSide[vsideI++] = VertexData(v0, 1.0f, kk);
+					verticesSide[vsideI++] = VertexData(v1, 0.0f, kk);
+					verticesSide[vsideI++] = VertexData(v1, 1.0f, kk);
+
+					kk = _textureAsStencil ? 1 : kk;
+					uint16_t winding = uint16_t(kk > 0);
+					for (uint8_t jj = 0, end = abs(kk); jj < end; ++jj)
 					{
 						indicesSide[sideI++] = indexSide;
 						indicesSide[sideI++] = indexSide + 2 - winding;
@@ -1663,42 +1632,6 @@ void shadowVolumeCreate(ShadowVolume& _shadowVolume
 				}
 			}
 		}
-#endif
-
-		for (; ii < numEdges; ++ii)
-		{
-			const Edge& edge = edges[ii];
-			const Plane* edgePlane = &edgePlanes[ii*2];
-
-			int16_t s0 = ( (vec3Dot(edgePlane[0].m_plane, _light) + edgePlane[0].m_plane[3]) > 0.0f) ^ edge.m_faceReverseOrder[0];
-			int16_t s1 = ( (vec3Dot(edgePlane[1].m_plane, _light) + edgePlane[1].m_plane[3]) > 0.0f) ^ edge.m_faceReverseOrder[1];
-			int16_t k = ( (s0 + s1) << 1) - 2;
-
-			if (k != 0)
-			{
-				float* v0 = (float*)&vertices[edge.m_i0*_stride];
-				float* v1 = (float*)&vertices[edge.m_i1*_stride];
-				verticesSide[vsideI++] = VertexData(v0, 0.0f, k);
-				verticesSide[vsideI++] = VertexData(v0, 1.0f, k);
-				verticesSide[vsideI++] = VertexData(v1, 0.0f, k);
-				verticesSide[vsideI++] = VertexData(v1, 1.0f, k);
-
-				k = _textureAsStencil ? 1 : k;
-				uint16_t winding = uint16_t(k > 0);
-				for (uint8_t ii = 0, end = abs(k); ii < end; ++ii)
-				{
-					indicesSide[sideI++] = indexSide;
-					indicesSide[sideI++] = indexSide + 2 - winding;
-					indicesSide[sideI++] = indexSide + 1 + winding;
-
-					indicesSide[sideI++] = indexSide + 2;
-					indicesSide[sideI++] = indexSide + 3 - winding*2;
-					indicesSide[sideI++] = indexSide + 1 + winding*2;
-				}
-
-				indexSide += 4;
-			}
-		}
 
 		if (cap)
 		{
@@ -1707,10 +1640,10 @@ void shadowVolumeCreate(ShadowVolume& _shadowVolume
 			{
 				const Face& face = *iter;
 
-				float f = vec3Dot(face.m_plane, _light) + face.m_plane[3];
+				float f = bx::vec3Dot(face.m_plane, _light) + face.m_plane[3];
 				bool frontFacing = (f > 0.0f);
 
-				for (uint8_t ii = 0, end = 1 + uint8_t(!_textureAsStencil); ii < end; ++ii)
+				for (uint8_t ii = 0, num = 1 + uint8_t(!_textureAsStencil); ii < num; ++ii)
 				{
 					if (frontFacing)
 					{
@@ -1935,54 +1868,30 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 	// for each renderer.
 	switch (bgfx::getRendererType() )
 	{
-	default:
 	case bgfx::RendererType::Direct3D9:
-		s_shaderPath = "shaders/dx9/";
 		s_texelHalf = 0.5f;
 		break;
 
-	case bgfx::RendererType::Direct3D11:
-		s_shaderPath = "shaders/dx11/";
-		break;
-
 	case bgfx::RendererType::OpenGL:
-		s_shaderPath = "shaders/glsl/";
+	case bgfx::RendererType::OpenGLES:
 		s_oglNdc = true;
 		break;
 
-	case bgfx::RendererType::OpenGLES:
-		s_shaderPath = "shaders/gles/";
-		s_oglNdc = true;
+	default:
 		break;
 	}
 
 	// Imgui
-	FILE* file = fopen("font/droidsans.ttf", "rb");
-	uint32_t size = (uint32_t)fsize(file);
-	void* data = malloc(size);
-	size_t ignore = fread(data, 1, size, file);
-	BX_UNUSED(ignore);
-	fclose(file);
-
-	imguiCreate(data);
-
-	free(data);
+	imguiCreate();
 
 	PosNormalTexcoordVertex::init();
 
 	s_uniforms.init();
 	s_uniforms.submitConstUniforms();
 
-	const bgfx::Memory* mem;
-
-	mem = loadTexture("figure-rgba.dds");
-	bgfx::TextureHandle figureTex = bgfx::createTexture(mem);
-
-	mem = loadTexture("flare.dds");
-	bgfx::TextureHandle flareTex = bgfx::createTexture(mem);
-
-	mem = loadTexture("fieldstone-rgba.dds");
-	bgfx::TextureHandle fieldstoneTex = bgfx::createTexture(mem);
+	bgfx::TextureHandle figureTex     = loadTexture("figure-rgba.dds");
+	bgfx::TextureHandle flareTex      = loadTexture("flare.dds");
+	bgfx::TextureHandle fieldstoneTex = loadTexture("fieldstone-rgba.dds");
 
 	bgfx::TextureHandle fbtextures[] =
 	{
@@ -1991,8 +1900,8 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 	};
 	s_stencilFb  = bgfx::createFrameBuffer(BX_COUNTOF(fbtextures), fbtextures, true);
 
-	u_texColor   = bgfx::createUniform("u_texColor",   bgfx::UniformType::Uniform1iv);
-	u_texStencil = bgfx::createUniform("u_texStencil", bgfx::UniformType::Uniform1iv);
+	s_texColor   = bgfx::createUniform("s_texColor",   bgfx::UniformType::Int1);
+	s_texStencil = bgfx::createUniform("s_texStencil", bgfx::UniformType::Int1);
 
 	bgfx::ProgramHandle programTextureLightning = loadProgram("vs_shadowvolume_texture_lightning", "fs_shadowvolume_texture_lightning");
 	bgfx::ProgramHandle programColorLightning   = loadProgram("vs_shadowvolume_color_lightning",   "fs_shadowvolume_color_lightning"  );
@@ -2201,7 +2110,7 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 
 		// Set view and projection matrix for view 0.
 		const bgfx::HMD* hmd = bgfx::getHMD();
-		if (NULL != hmd)
+		if (NULL != hmd && 0 != (hmd->flags & BGFX_HMD_RENDERING) )
 		{
 			float eye[3];
 			cameraGetPosition(eye);
@@ -2220,9 +2129,10 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 
 		imguiBeginFrame(mouseState.m_mx
 			, mouseState.m_my
-			, (mouseState.m_buttons[entry::MouseButton::Left  ] ? IMGUI_MBUT_LEFT  : 0)
-			| (mouseState.m_buttons[entry::MouseButton::Right ] ? IMGUI_MBUT_RIGHT : 0)
-			, 0
+			, (mouseState.m_buttons[entry::MouseButton::Left  ] ? IMGUI_MBUT_LEFT   : 0)
+			| (mouseState.m_buttons[entry::MouseButton::Right ] ? IMGUI_MBUT_RIGHT  : 0)
+			| (mouseState.m_buttons[entry::MouseButton::Middle] ? IMGUI_MBUT_MIDDLE : 0)
+			, mouseState.m_mz
 			, viewState.m_width
 			, viewState.m_height
 			);
@@ -2340,7 +2250,6 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 		s_uniforms.m_params.m_lightningPass   = 1.0f;
 		s_uniforms.m_params.m_texelHalf       = s_texelHalf;
 		s_uniforms.m_svparams.m_useStencilTex = float(settings_useStencilTexture);
-		s_uniforms.submitPerFrameUniforms();
 
 		//set picked bunny model
 		Model* bunnyModel = BunnyLowPoly == currentMesh ? &bunnyLowPolyModel : &bunnyHighPolyModel;
@@ -2364,9 +2273,9 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 		{
 			for (uint8_t ii = 0; ii < settings_numLights; ++ii)
 			{
-				lightPosRadius[ii][0] = cos(2.0f*bx::pi/settings_numLights * float(ii) + lightTimeAccumulator * 1.1f + 3.0f) * 20.0f;
+				lightPosRadius[ii][0] = cosf(2.0f*bx::pi/settings_numLights * float(ii) + lightTimeAccumulator * 1.1f + 3.0f) * 20.0f;
 				lightPosRadius[ii][1] = 20.0f;
-				lightPosRadius[ii][2] = sin(2.0f*bx::pi/settings_numLights * float(ii) + lightTimeAccumulator * 1.1f + 3.0f) * 20.0f;
+				lightPosRadius[ii][2] = sinf(2.0f*bx::pi/settings_numLights * float(ii) + lightTimeAccumulator * 1.1f + 3.0f) * 20.0f;
 				lightPosRadius[ii][3] = 20.0f;
 			}
 		}
@@ -2374,9 +2283,9 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 		{
 			for (uint8_t ii = 0; ii < settings_numLights; ++ii)
 			{
-				lightPosRadius[ii][0] = cos(float(ii) * 2.0f/settings_numLights + lightTimeAccumulator * 1.3f + bx::pi) * 40.0f;
+				lightPosRadius[ii][0] = cosf(float(ii) * 2.0f/settings_numLights + lightTimeAccumulator * 1.3f + bx::pi) * 40.0f;
 				lightPosRadius[ii][1] = 20.0f;
-				lightPosRadius[ii][2] = sin(float(ii) * 2.0f/settings_numLights + lightTimeAccumulator * 1.3f + bx::pi) * 40.0f;
+				lightPosRadius[ii][2] = sinf(float(ii) * 2.0f/settings_numLights + lightTimeAccumulator * 1.3f + bx::pi) * 40.0f;
 				lightPosRadius[ii][3] = 20.0f;
 			}
 		}
@@ -2450,9 +2359,9 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 			inst.m_rotation[0] = 0.0f;
 			inst.m_rotation[1] = 0.0f;
 			inst.m_rotation[2] = 0.0f;
-			inst.m_pos[0]      = sin(ii * 2.0f + 13.0f + sceneTimeAccumulator * 1.1f) * 13.0f;
+			inst.m_pos[0]      = sinf(ii * 2.0f + 13.0f + sceneTimeAccumulator * 1.1f) * 13.0f;
 			inst.m_pos[1]      = 6.0f;
-			inst.m_pos[2]      = cos(ii * 2.0f + 13.0f + sceneTimeAccumulator * 1.1f) * 13.0f;
+			inst.m_pos[2]      = cosf(ii * 2.0f + 13.0f + sceneTimeAccumulator * 1.1f) * 13.0f;
 			inst.m_model       = &cubeModel;
 		}
 
@@ -2467,9 +2376,9 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 			inst.m_rotation[0] = 0.0f;
 			inst.m_rotation[1] = 0.0f;
 			inst.m_rotation[2] = 0.0f;
-			inst.m_pos[0]      = sin(ii * 2.0f + 13.0f + sceneTimeAccumulator * 1.1f) * 13.0f;
+			inst.m_pos[0]      = sinf(ii * 2.0f + 13.0f + sceneTimeAccumulator * 1.1f) * 13.0f;
 			inst.m_pos[1]      = 22.0f;
-			inst.m_pos[2]      = cos(ii * 2.0f + 13.0f + sceneTimeAccumulator * 1.1f) * 13.0f;
+			inst.m_pos[2]      = cosf(ii * 2.0f + 13.0f + sceneTimeAccumulator * 1.1f) * 13.0f;
 			inst.m_model       = &cubeModel;
 		}
 
@@ -2616,15 +2525,15 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 
 		// Make sure at the beginning everything gets cleared.
 		bgfx::setViewClear(0
-				, BGFX_CLEAR_COLOR_BIT
-				| BGFX_CLEAR_DEPTH_BIT
-				| BGFX_CLEAR_STENCIL_BIT
+				, BGFX_CLEAR_COLOR
+				| BGFX_CLEAR_DEPTH
+				| BGFX_CLEAR_STENCIL
 				, clearValues.m_clearRgba
 				, clearValues.m_clearDepth
 				, clearValues.m_clearStencil
 				);
 
-		::submit(0);
+		::touch(0);
 
 		// Draw ambient only.
 		s_uniforms.m_params.m_ambientPass = 1.0f;
@@ -2653,7 +2562,7 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 		// Using stencil texture requires rendering to separate render target. first pass is building depth buffer.
 		if (settings_useStencilTexture)
 		{
-			bgfx::setViewClear(VIEWID_RANGE1_RT_PASS1, BGFX_CLEAR_DEPTH_BIT, 0x00000000, 1.0f, 0);
+			bgfx::setViewClear(VIEWID_RANGE1_RT_PASS1, BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
 			bgfx::setViewFrameBuffer(VIEWID_RANGE1_RT_PASS1, s_stencilFb);
 
 			const RenderState& renderState = s_renderStates[RenderState::ShadowVolume_UsingStencilTexture_BuildDepth];
@@ -2689,7 +2598,7 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 				bgfx::setViewFrameBuffer(viewId, s_stencilFb);
 
 				bgfx::setViewClear(viewId
-						, BGFX_CLEAR_COLOR_BIT
+						, BGFX_CLEAR_COLOR
 						, 0x00000000
 						, 1.0f
 						, 0
@@ -2701,7 +2610,7 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 				bgfx::setViewFrameBuffer(viewId, invalid);
 
 				bgfx::setViewClear(viewId
-						, BGFX_CLEAR_STENCIL_BIT
+						, BGFX_CLEAR_STENCIL
 						, clearValues.m_clearRgba
 						, clearValues.m_clearDepth
 						, clearValues.m_clearStencil
@@ -2806,30 +2715,27 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 					const RenderState& renderStateCraftStencil = s_renderStates[renderStateIndex];
 
 					s_uniforms.submitPerDrawUniforms();
-					bgfx::setProgram(svProgs[programIndex][ShadowVolumePart::Side]);
 					bgfx::setTransform(shadowVolumeMtx);
 					bgfx::setVertexBuffer(shadowVolume.m_vbSides);
 					bgfx::setIndexBuffer(shadowVolume.m_ibSides);
-					::setRenderState(renderStateCraftStencil);
-					::submit(viewId);
+					setRenderState(renderStateCraftStencil);
+					::submit(viewId, svProgs[programIndex][ShadowVolumePart::Side]);
 
 					if (shadowVolume.m_cap)
 					{
 						s_uniforms.submitPerDrawUniforms();
-						bgfx::setProgram(svProgs[programIndex][ShadowVolumePart::Front]);
 						bgfx::setTransform(shadowVolumeMtx);
 						bgfx::setVertexBuffer(group.m_vbh);
 						bgfx::setIndexBuffer(shadowVolume.m_ibFrontCap);
-						::setRenderState(renderStateCraftStencil);
-						::submit(viewId);
+						setRenderState(renderStateCraftStencil);
+						::submit(viewId, svProgs[programIndex][ShadowVolumePart::Front]);
 
 						s_uniforms.submitPerDrawUniforms();
-						bgfx::setProgram(svProgs[programIndex][ShadowVolumePart::Back]);
 						bgfx::setTransform(shadowVolumeMtx);
 						bgfx::setVertexBuffer(group.m_vbh);
 						bgfx::setIndexBuffer(shadowVolume.m_ibBackCap);
 						::setRenderState(renderStateCraftStencil);
-						::submit(viewId);
+						::submit(viewId, svProgs[programIndex][ShadowVolumePart::Back]);
 					}
 
 					if (settings_drawShadowVolumes)
@@ -2837,30 +2743,27 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 						const RenderState& renderState = s_renderStates[RenderState::Custom_DrawShadowVolume_Lines];
 
 						s_uniforms.submitPerDrawUniforms();
-						bgfx::setProgram(svProgs[ShadowVolumeProgramType::Color][ShadowVolumePart::Side]);
 						bgfx::setTransform(shadowVolumeMtx);
 						bgfx::setVertexBuffer(shadowVolume.m_vbSides);
 						bgfx::setIndexBuffer(shadowVolume.m_ibSides);
 						::setRenderState(renderState);
-						::submit(VIEWID_RANGE1_PASS3);
+						::submit(VIEWID_RANGE1_PASS3, svProgs[ShadowVolumeProgramType::Color][ShadowVolumePart::Side]);
 
 						if (shadowVolume.m_cap)
 						{
 							s_uniforms.submitPerDrawUniforms();
-							bgfx::setProgram(svProgs[ShadowVolumeProgramType::Color][ShadowVolumePart::Front]);
 							bgfx::setTransform(shadowVolumeMtx);
 							bgfx::setVertexBuffer(group.m_vbh);
 							bgfx::setIndexBuffer(shadowVolume.m_ibFrontCap);
 							::setRenderState(renderState);
-							::submit(VIEWID_RANGE1_PASS3);
+							::submit(VIEWID_RANGE1_PASS3, svProgs[ShadowVolumeProgramType::Color][ShadowVolumePart::Front]);
 
 							s_uniforms.submitPerDrawUniforms();
-							bgfx::setProgram(svProgs[ShadowVolumeProgramType::Color][ShadowVolumePart::Back]);
 							bgfx::setTransform(shadowVolumeMtx);
 							bgfx::setVertexBuffer(group.m_vbh);
 							bgfx::setIndexBuffer(shadowVolume.m_ibBackCap);
 							::setRenderState(renderState);
-							::submit(VIEWID_RANGE1_PASS3);
+							::submit(VIEWID_RANGE1_PASS3, svProgs[ShadowVolumeProgramType::Color][ShadowVolumePart::Back]);
 						}
 					}
 				}
@@ -2879,15 +2782,15 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 			viewId += uint8_t(settings_useStencilTexture);
 
 			// Draw shadow casters.
-			for (uint8_t ii = 0; ii < shadowCastersCount[currentScene]; ++ii)
+			for (uint8_t jj = 0; jj < shadowCastersCount[currentScene]; ++jj)
 			{
-				shadowCasters[currentScene][ii].submit(viewId, drawDiffuse);
+				shadowCasters[currentScene][jj].submit(viewId, drawDiffuse);
 			}
 
 			// Draw shadow receivers.
-			for (uint8_t ii = 0; ii < shadowReceiversCount[currentScene]; ++ii)
+			for (uint8_t jj = 0; jj < shadowReceiversCount[currentScene]; ++jj)
 			{
-				shadowReceivers[currentScene][ii].submit(viewId, drawDiffuse);
+				shadowReceivers[currentScene][jj].submit(viewId, drawDiffuse);
 			}
 		}
 
@@ -2938,8 +2841,8 @@ int _main_(int /*_argc*/, char** /*_argv*/)
 
 	s_uniforms.destroy();
 
-	bgfx::destroyUniform(u_texColor);
-	bgfx::destroyUniform(u_texStencil);
+	bgfx::destroyUniform(s_texColor);
+	bgfx::destroyUniform(s_texStencil);
 	bgfx::destroyFrameBuffer(s_stencilFb);
 
 	bgfx::destroyTexture(figureTex);

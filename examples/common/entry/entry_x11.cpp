@@ -10,7 +10,8 @@
 #define XK_MISCELLANY
 #define XK_LATIN1
 #include <X11/keysymdef.h>
-#include <bgfxplatform.h> // will include X11 which #defines None... Don't mess with order of includes.
+#include <X11/Xlib.h> // will include X11 which #defines None... Don't mess with order of includes.
+#include <bgfxplatform.h>
 
 #undef None
 #include <bx/thread.h>
@@ -62,6 +63,11 @@ namespace entry
 
 	struct Joystick
 	{
+		Joystick()
+			: m_fd(-1)
+		{
+		}
+
 		void init()
 		{
 			m_fd = open("/dev/input/js0", O_RDONLY | O_NONBLOCK);
@@ -79,7 +85,7 @@ namespace entry
 
 		void shutdown()
 		{
-			if (0 != m_fd)
+			if (-1 != m_fd)
 			{
 				close(m_fd);
 			}
@@ -98,7 +104,7 @@ namespace entry
 
 		bool update(EventQueue& _eventQueue)
 		{
-			if (0 == m_fd)
+			if (-1 == m_fd)
 			{
 				return false;
 			}
@@ -201,13 +207,24 @@ namespace entry
 			initTranslateKey(XK_Down,         Key::Down);
 			initTranslateKey(XK_Left,         Key::Left);
 			initTranslateKey(XK_Right,        Key::Right);
-			initTranslateKey(XK_Page_Up,      Key::PageUp);
-			initTranslateKey(XK_Page_Down,    Key::PageUp);
+			initTranslateKey(XK_Insert,       Key::Insert);
+			initTranslateKey(XK_Delete,       Key::Delete);
 			initTranslateKey(XK_Home,         Key::Home);
 			initTranslateKey(XK_KP_End,       Key::End);
+			initTranslateKey(XK_Page_Up,      Key::PageUp);
+			initTranslateKey(XK_Page_Down,    Key::PageDown);
 			initTranslateKey(XK_Print,        Key::Print);
 			initTranslateKey(XK_equal,        Key::Plus);
 			initTranslateKey(XK_minus,        Key::Minus);
+			initTranslateKey(XK_bracketleft,  Key::LeftBracket);
+			initTranslateKey(XK_bracketright, Key::RightBracket);
+			initTranslateKey(XK_semicolon,    Key::Semicolon);
+			initTranslateKey(XK_apostrophe,   Key::Quote);
+			initTranslateKey(XK_comma,        Key::Comma);
+			initTranslateKey(XK_period,       Key::Period);
+			initTranslateKey(XK_slash,        Key::Slash);
+			initTranslateKey(XK_backslash,    Key::Backslash);
+			initTranslateKey(XK_grave,        Key::Tilde);
 			initTranslateKey(XK_F1,           Key::F1);
 			initTranslateKey(XK_F2,           Key::F2);
 			initTranslateKey(XK_F3,           Key::F3);
@@ -266,6 +283,10 @@ namespace entry
 			initTranslateKey('x',             Key::KeyX);
 			initTranslateKey('y',             Key::KeyY);
 			initTranslateKey('z',             Key::KeyZ);
+
+			m_mx = 0;
+			m_my = 0;
+			m_mz = 0;
 		}
 
 		int32_t run(int _argc, char** _argv)
@@ -289,7 +310,6 @@ namespace entry
 					| KeyPressMask
 					| KeyReleaseMask
 					| PointerMotionMask
-					| ResizeRedirectMask
 					| StructureNotifyMask
 					;
 
@@ -352,9 +372,6 @@ namespace entry
 						case Expose:
 							break;
 
-						case ConfigureNotify:
-							break;
-
 						case ClientMessage:
 							if ( (Atom)event.xclient.data.l[0] == wmDeleteWindow)
 							{
@@ -366,18 +383,19 @@ namespace entry
 						case ButtonRelease:
 							{
 								const XButtonEvent& xbutton = event.xbutton;
-								MouseButton::Enum mb;
+								MouseButton::Enum mb = MouseButton::None;
 								switch (xbutton.button)
 								{
 									case Button1: mb = MouseButton::Left;   break;
 									case Button2: mb = MouseButton::Middle; break;
 									case Button3: mb = MouseButton::Right;  break;
-									default:      mb = MouseButton::None;   break;
+									case Button4: ++m_mz; break;
+									case Button5: --m_mz; break;
 								}
 
+								WindowHandle handle = findHandle(xbutton.window);
 								if (MouseButton::None != mb)
 								{
-									WindowHandle handle = findHandle(xbutton.window);
 									m_eventQueue.postMouseEvent(handle
 										, xbutton.x
 										, xbutton.y
@@ -386,6 +404,14 @@ namespace entry
 										, event.type == ButtonPress
 										);
 								}
+								else
+								{
+									m_eventQueue.postMouseEvent(handle
+											, m_mx
+											, m_my
+											, m_mz
+											);
+								}
 							}
 							break;
 
@@ -393,10 +419,14 @@ namespace entry
 							{
 								const XMotionEvent& xmotion = event.xmotion;
 								WindowHandle handle = findHandle(xmotion.window);
+
+								m_mx = xmotion.x;
+								m_my = xmotion.y;
+
 								m_eventQueue.postMouseEvent(handle
-										, xmotion.x
-										, xmotion.y
-										, 0
+										, m_mx
+										, m_my
+										, m_mz
 										);
 							}
 							break;
@@ -431,14 +461,13 @@ namespace entry
 							}
 							break;
 
-						case ResizeRequest:
+						case ConfigureNotify:
 							{
-								const XResizeRequestEvent& xresize = event.xresizerequest;
-								XResizeWindow(xresize.display, xresize.window, xresize.width, xresize.height);
-								WindowHandle handle = findHandle(xresize.window);
+								const XConfigureEvent& xev = event.xconfigure;
+								WindowHandle handle = findHandle(xev.window);
 								if (isValid(handle) )
 								{
-									m_eventQueue.postSizeEvent(handle, xresize.width, xresize.height);
+									m_eventQueue.postSizeEvent(handle, xev.width, xev.height);
 								}
 							}
 							break;
@@ -453,7 +482,7 @@ namespace entry
 			XUnmapWindow(m_display, m_window[0]);
 			XDestroyWindow(m_display, m_window[0]);
 
-			return EXIT_SUCCESS;
+			return thread.getExitCode();
 		}
 
 		void setModifier(Modifier::Enum _modifier, bool _set)
@@ -541,6 +570,10 @@ namespace entry
 
 		uint8_t m_modifiers;
 		bool m_exit;
+
+		int32_t m_mx;
+		int32_t m_my;
+		int32_t m_mz;
 
 		EventQueue m_eventQueue;
 		bx::LwMutex m_lock;
@@ -638,6 +671,11 @@ namespace entry
 	}
 
 	void toggleWindowFrame(WindowHandle _handle)
+	{
+		BX_UNUSED(_handle);
+	}
+
+	void toggleFullscreen(WindowHandle _handle)
 	{
 		BX_UNUSED(_handle);
 	}

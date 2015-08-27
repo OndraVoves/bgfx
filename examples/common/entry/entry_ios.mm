@@ -11,6 +11,12 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/CAEAGLLayer.h>
 
+#if __IPHONE_8_0 && !TARGET_IPHONE_SIMULATOR  // check if sdk/target supports metal
+#   import <Metal/Metal.h>
+#   import <QuartzCore/CAMetalLayer.h>
+//#   define HAS_METAL_SDK
+#endif
+
 #include <bgfxplatform.h>
 
 #include <bx/uint32_t.h>
@@ -60,13 +66,19 @@ namespace entry
 	int32_t MainThreadEntry::threadFunc(void* _userData)
 	{
 		CFBundleRef mainBundle = CFBundleGetMainBundle();
-		CFURLRef resourcesURL = CFBundleCopyResourcesDirectoryURL(mainBundle);
-		char path[PATH_MAX];
-		if (CFURLGetFileSystemRepresentation(resourcesURL, TRUE, (UInt8 *)path, PATH_MAX) )
+		if ( mainBundle != nil )
 		{
-			chdir(path);
+			CFURLRef resourcesURL = CFBundleCopyResourcesDirectoryURL(mainBundle);
+			if ( resourcesURL != nil )
+			{
+				char path[PATH_MAX];
+				if (CFURLGetFileSystemRepresentation(resourcesURL, TRUE, (UInt8 *)path, PATH_MAX) )
+				{
+					chdir(path);
+				}
+				CFRelease(resourcesURL);
+			}
 		}
-		CFRelease(resourcesURL);
 
 		MainThreadEntry* self = (MainThreadEntry*)_userData;
 		int32_t result = main(self->m_argc, self->m_argv);
@@ -120,6 +132,11 @@ namespace entry
 		BX_UNUSED(_handle);
 	}
 
+	void toggleFullscreen(WindowHandle _handle)
+	{
+		BX_UNUSED(_handle);
+	}
+
 	void setMouseLock(WindowHandle _handle, bool _lock)
 	{
 		BX_UNUSED(_handle, _lock);
@@ -128,6 +145,22 @@ namespace entry
 } // namespace entry
 
 using namespace entry;
+
+#ifdef HAS_METAL_SDK
+static	id<MTLDevice>  m_device = NULL;
+#else
+static	void* m_device = NULL;
+#endif
+
+@interface ViewController : UIViewController
+@end
+@implementation ViewController
+- (BOOL)prefersStatusBarHidden
+{
+	return YES;
+}
+@end
+
 
 @interface View : UIView
 {
@@ -140,6 +173,19 @@ using namespace entry;
 
 + (Class)layerClass
 {
+#ifdef HAS_METAL_SDK
+	Class metalClass = NSClassFromString(@"CAMetalLayer");    //is metal runtime sdk available
+	if ( metalClass != nil)
+	{
+		m_device = MTLCreateSystemDefaultDevice(); // is metal supported on this device (is there a better way to do this - without creating device ?)
+		if (m_device)
+		{
+			[m_device retain];
+			return metalClass;
+		}
+	}
+#endif
+	
 	return [CAEAGLLayer class];
 }
 
@@ -151,11 +197,23 @@ using namespace entry;
 	{
 		return nil;
 	}
-
-	CAEAGLLayer* layer = (CAEAGLLayer*)self.layer;
-	bgfx::iosSetEaglLayer(layer);
-
+	
+	bgfx::PlatformData pd;
+	pd.ndt          = NULL;
+	pd.nwh          = self.layer;
+	pd.context		= m_device;
+	pd.backBuffer   = NULL;
+	pd.backBufferDS = NULL;
+	bgfx::setPlatformData(pd);
+	
 	return self;
+}
+
+- (void)layoutSubviews
+{
+	uint32_t frameW = (uint32_t)(self.contentScaleFactor * self.frame.size.width);
+	uint32_t frameH = (uint32_t)(self.contentScaleFactor * self.frame.size.height);
+	s_ctx->m_eventQueue.postSizeEvent(s_defaultWindow, frameW, frameH);
 }
 
 - (void)start
@@ -245,6 +303,13 @@ using namespace entry;
 	m_view = [ [View alloc] initWithFrame: rect];
 
 	[m_window addSubview: m_view];
+
+	UIViewController *viewController = [[ViewController alloc] init];
+	viewController.view = m_view;
+
+	[m_window setRootViewController:viewController];
+	[m_window makeKeyAndVisible];
+	
 	[m_window makeKeyAndVisible];
 
 	//float scaleFactor = [[UIScreen mainScreen] scale]; // should use this, but ui is too small on ipad retina
@@ -258,22 +323,26 @@ using namespace entry;
 - (void)applicationWillResignActive:(UIApplication *)application
 {
 	BX_UNUSED(application);
+	s_ctx->m_eventQueue.postSuspendEvent(s_defaultWindow, Suspend::WillSuspend);
 	[m_view stop];
 }
 
 - (void)applicationDidEnterBackground:(UIApplication *)application
 {
 	BX_UNUSED(application);
+	s_ctx->m_eventQueue.postSuspendEvent(s_defaultWindow, Suspend::DidSuspend);
 }
 
 - (void)applicationWillEnterForeground:(UIApplication *)application
 {
 	BX_UNUSED(application);
+	s_ctx->m_eventQueue.postSuspendEvent(s_defaultWindow, Suspend::WillResume);
 }
 
 - (void)applicationDidBecomeActive:(UIApplication *)application
 {
 	BX_UNUSED(application);
+	s_ctx->m_eventQueue.postSuspendEvent(s_defaultWindow, Suspend::DidResume);
 	[m_view start];
 }
 

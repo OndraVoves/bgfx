@@ -27,9 +27,11 @@
 #define IMGUI_H_HEADER_GUARD
 
 #include <bgfx.h>
+#include <ocornut-imgui/imgui.h>
 
-#define IMGUI_MBUT_LEFT  0x01
-#define IMGUI_MBUT_RIGHT 0x02
+#define IMGUI_MBUT_LEFT   0x01
+#define IMGUI_MBUT_RIGHT  0x02
+#define IMGUI_MBUT_MIDDLE 0x04
 
 /// For custom values, define these macros before including imgui.h
 
@@ -93,6 +95,18 @@ struct ImguiAlign
 	};
 };
 
+struct ImguiCubemap
+{
+	enum Enum
+	{
+		Cross,
+		Latlong,
+		Hex,
+
+		Count,
+	};
+};
+
 struct ImguiBorder
 {
 	enum Enum
@@ -120,10 +134,13 @@ ImguiFontHandle imguiCreateFont(const void* _data, float _fontSize=15.0f);
 void imguiSetFont(ImguiFontHandle _handle);
 ImguiFontHandle imguiGetCurrentFont();
 
-ImguiFontHandle imguiCreate(const void* _data, float _fontSize=15.0f);
+namespace bx { struct AllocatorI; }
+
+ImguiFontHandle imguiCreate(const void* _data = NULL, uint32_t _size = 0, float _fontSize = 15.0f, bx::AllocatorI* _allocator = NULL);
 void imguiDestroy();
 
-void imguiBeginFrame(int32_t _mx, int32_t _my, uint8_t _button, int32_t _scroll, uint16_t _width, uint16_t _height, char _inputChar = 0, uint8_t _view = 31);
+void imguiBeginFrame(int32_t _mx, int32_t _my, uint8_t _button, int32_t _scroll, uint16_t _width, uint16_t _height, char _inputChar = 0, uint8_t _view = 255);
+void imguiBeginFrame(int32_t _mx, int32_t _my, uint8_t _button, int32_t _scroll, uint16_t _width, uint16_t _height, uint16_t _surfaceWidth, uint16_t _surfaceHeight, char _inputChar = 0, uint8_t _view = 255);
 void imguiEndFrame();
 
 void imguiDrawText(int _x, int _y, ImguiTextAlign::Enum _align, const char* _text, uint32_t _argb);
@@ -145,7 +162,7 @@ void imguiEndScrollArea(int32_t _r = IMGUI_SCROLL_BAR_R);
 void imguiIndent(uint16_t _width = IMGUI_INDENT_VALUE);
 void imguiUnindent(uint16_t _width = IMGUI_INDENT_VALUE);
 void imguiSeparator(uint16_t _height = IMGUI_SEPARATOR_VALUE);
-void imguiSeparatorLine(uint16_t _height = IMGUI_SEPARATOR_VALUE);
+void imguiSeparatorLine(uint16_t _height = IMGUI_SEPARATOR_VALUE, ImguiAlign::Enum = ImguiAlign::LeftIndented);
 
 int32_t imguiGetWidgetX();
 int32_t imguiGetWidgetY();
@@ -183,9 +200,21 @@ bool imguiImage(bgfx::TextureHandle _image, float _lod, int32_t _width, int32_t 
 bool imguiImage(bgfx::TextureHandle _image, float _lod, float _scale, float _aspect, ImguiAlign::Enum _align = ImguiAlign::LeftIndented, bool _enabled = true, bool _originBottomLeft = false);
 bool imguiImageChannel(bgfx::TextureHandle _image, uint8_t _channel, float _lod, int32_t _width, int32_t _height, ImguiAlign::Enum _align = ImguiAlign::LeftIndented, bool _enabled = true);
 bool imguiImageChannel(bgfx::TextureHandle _image, uint8_t _channel, float _lod, float _scale, float _aspect, ImguiAlign::Enum _align = ImguiAlign::LeftIndented, bool _enabled = true);
-bool imguiCube(bgfx::TextureHandle _cubemap, float _lod = 0.0f, bool _cross = true, ImguiAlign::Enum _align = ImguiAlign::LeftIndented, bool _enabled = true);
+bool imguiCube(bgfx::TextureHandle _cubemap, float _lod = 0.0f, ImguiCubemap::Enum _display = ImguiCubemap::Cross, bool _sameHeight = false, ImguiAlign::Enum _align = ImguiAlign::LeftIndented, bool _enabled = true);
 
 float imguiGetTextLength(const char* _text, ImguiFontHandle _handle);
 bool imguiMouseOverArea();
+
+namespace ImGui
+{
+	// Helper function for passing bgfx::TextureHandle to ImGui::Image.
+	inline void Image(bgfx::TextureHandle _handle, const ImVec2& _size, const ImVec2& _uv0 = ImVec2(0, 0), const ImVec2& _uv1 = ImVec2(1, 1), const ImVec4& _tint_col = ImVec4(1, 1, 1, 1), const ImVec4& _border_col = ImVec4(0, 0, 0, 0) )
+	{
+		union { bgfx::TextureHandle handle; ImTextureID ptr; } texture;
+		texture.handle = _handle;
+		Image(texture.ptr, _size, _uv0, _uv1, _tint_col, _border_col);
+	}
+
+} // namespace ImGui
 
 #endif // IMGUI_H_HEADER_GUARD
